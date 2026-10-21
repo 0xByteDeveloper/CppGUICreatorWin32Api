@@ -13,3 +13,5 @@ build/
 # Designer runtime data (created under %LOCALAPPDATA% on real runs)
 # Dev-test intermediates
 /tmp/
+tests/test_core
+/tmp/
