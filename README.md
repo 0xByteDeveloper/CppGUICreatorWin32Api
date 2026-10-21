@@ -1,5 +1,14 @@
 # CppGUICreatorWin32Api
 
+**Win32 API ile saf C++ GUI tasarımcısı** — Visual Studio 2019 Windows Forms deneyiminin .NET'siz, native yeniden inşası.
+
+## 📚 Belgeler
+
+| Doküman | İçerik |
+|---|---|
+| [KULLANICI_ISTEGI.md](KULLANICI_ISTEGI.md) | Projenin kurucu vizyonu — birebir kullanıcı isteği |
+| [PLAN.md](PLAN.md) | Mimari plan: injection↔standalone kararı, tasarımcı UI spec, kod üretimi, VS 2019 entegrasyonu (EnvDTE), faz planı |
+
 ## Config_info.json
 
 **Visual Studio 2019 C++/CLR (Windows Forms) tüm eleman kataloğu** — Win32 API GUI üretici için yapılandırma kaynağı.
