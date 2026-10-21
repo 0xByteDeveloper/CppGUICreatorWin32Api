@@ -1,0 +1,3 @@
+// mingw.rc — embed the manifest for MinGW builds (MSVC embeds via linker)
+#include <windows.h>
+1 24 "app.manifest"

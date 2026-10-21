@@ -1,0 +1,15 @@
+# Build artifacts
+*.exe
+*.o
+*.obj
+*.res
+*.pdb
+*.ilk
+bin/
+build/
+.vs/
+*.user
+
+# Designer runtime data (created under %LOCALAPPDATA% on real runs)
+# Dev-test intermediates
+/tmp/

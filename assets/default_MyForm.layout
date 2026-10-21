@@ -1,0 +1,18 @@
+FORM|MyForm|MyForm|760|480|FFFFFF
+CTRL|Label|label1|Hesap Bilgisi|24|18|220|24|1001|0|0
+CTRL|TextBox|textBox1|Ad Soyad|24|50|240|30|1002|0|0
+CTRL|Button|button1|KAYDET|24|92|124|36|1003|0|0
+CTRL|CheckBox|checkBox1|Beni hatırla|166|98|150|26|1004|0|0
+CTRL|GroupBox|groupBox1|Detaylar|24|140|348|160|1005|0|0
+CTRL|PictureBox|pictureBox1||388|140|348|160|1006|0|0
+CTRL|ListBox|listBox1|Öğe 1|388|312|348|120|1007|0|0
+CTRL|ProgressBar|progressBar1||24|312|348|18|1008|0|0
+CTRL|TrackBar|trackBar1||24|348|348|30|1009|0|0
+EVT|pictureBox1|Paint|
+EVT|groupBox1|Paint|
+EVT|button1|Click|
+EVT|textBox1|TextChanged|
+EVT|trackBar1|Scroll|
+EVT|checkBox1|CheckedChanged|
+PROP|label1|ForeColor|1D1D1F
+PROP|progressBar1|Value|70
