@@ -22,9 +22,10 @@ static void EnableDpiAwareness()
     if (f2) f2();
 }
 
-int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int nCmdShow)
+int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR lpCmdLine, int nCmdShow)
 {
     (void)nCmdShow;
+    if (lpCmdLine && wcsstr(lpCmdLine, L"--autotour")) g_autotour = true;
     // COM apartment for DTE automation (STA required by EnvDTE)
     HRESULT hrCo = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     // DPI first, then GDI+ and fonts
@@ -42,6 +43,7 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int nCmdShow)
 
     int rc = 0;
     if (ok) {
+        if (g_autotour) mw.StartAutoTour();
         MSG msg;
         while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
             TranslateMessage(&msg);

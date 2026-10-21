@@ -61,10 +61,51 @@ Color HexCol(const std::wstring& hex, Color def)
 static HFONT  g_fonts[F_COUNT] = { 0 };
 static UINT   g_dpiCache = 0;
 
+// Resolved GDI+ families: the first candidate that GDI+ can actually create.
+// Needed because GDI+ FontFamily() does NOT fall back like the GDI mapper does
+// (observed under Wine: only bundled Tahoma is visible to GDI+), while GDI
+// TextOut falls back gracefully. On real Windows "Segoe UI" resolves on the
+// first try, so behaviour there is unchanged.
+static Gdiplus::FontFamily* g_gpFamily = nullptr;
+static std::wstring         g_gpFamilyName = L"Tahoma";
+static Gdiplus::FontFamily* g_gpMonoFamily = nullptr;
+static std::wstring         g_gpMonoName   = L"Consolas";
+
+static void ResolveFontFamilies()
+{
+    if (g_gpFamily) return;
+    const wchar_t* cands[] = {
+        L"Segoe UI", L"Segoe UI Variable", L"Tahoma", L"Arial", L"Arimo",
+        L"Helvetica Neue", L"Liberation Sans", L"Noto Sans", L"DejaVu Sans",
+        L"Verdana"
+    };
+    for (const wchar_t* c : cands) {
+        Gdiplus::FontFamily* ff = new Gdiplus::FontFamily(c);
+        if (ff->GetLastStatus() == Gdiplus::Ok) {
+            g_gpFamily = ff; g_gpFamilyName = c; break;
+        }
+        delete ff;
+    }
+    if (!g_gpFamily) { g_gpFamily = new Gdiplus::FontFamily(L"Tahoma"); g_gpFamilyName = L"Tahoma"; }
+
+    const wchar_t* monos[] = {
+        L"Consolas", L"Cascadia Mono", L"Cascadia Code", L"Courier New",
+        L"DejaVu Sans Mono", L"Liberation Mono", L"Sarasa Mono SC", L"Courier"
+    };
+    for (const wchar_t* c : monos) {
+        Gdiplus::FontFamily* ff = new Gdiplus::FontFamily(c);
+        if (ff->GetLastStatus() == Gdiplus::Ok) {
+            g_gpMonoFamily = ff; g_gpMonoName = c; break;
+        }
+        delete ff;
+    }
+    if (!g_gpMonoFamily) { g_gpMonoFamily = g_gpFamily; g_gpMonoName = g_gpFamilyName; }
+}
+
 std::wstring Theme_FontFamily()
 {
-    // Segoe UI Variable (Win11) with graceful Segoe UI fallback handled by GDI
-    return L"Segoe UI";
+    ResolveFontFamilies();
+    return g_gpFamilyName;
 }
 
 static int PtToPx(int pt, UINT dpi) { return -(int)lround(pt * dpi / 72.0); }
@@ -198,7 +239,32 @@ static StringFormat* SF(int alignH, int alignV, bool ellipsis)
 static Font* FontFrom(HDC hdc, HFONT hf)
 {
     if (!hf) return nullptr;
-    return new Font(hdc, hf);
+    ResolveFontFamilies();
+    // native path first (real Windows): GDI+ reads the HFONT directly
+    Font* f = new Font(hdc, hf);
+    if (f->GetLastStatus() == Gdiplus::Ok) return f;
+    delete f;
+    // fallback: rebuild from the HFONT's metrics using a GDI+-visible family
+    HGDIOBJ old = SelectObject(hdc, hf);
+    TEXTMETRICW tm; memset(&tm, 0, sizeof(tm));
+    BOOL haveTm = GetTextMetricsW(hdc, &tm);
+    wchar_t face[64] = { 0 };
+    GetTextFaceW(hdc, 64, face);
+    SelectObject(hdc, old);
+    int  px     = haveTm ? (tm.tmHeight - tm.tmInternalLeading) : 16;
+    int  weight = haveTm ? tm.tmWeight : FW_NORMAL;
+    bool italic = haveTm ? (tm.tmItalic != 0) : false;
+    bool mono   = (wcscmp(face, L"Consolas") == 0);
+    FontStyle st = FontStyleRegular;
+    if (weight >= 600 && italic) st = FontStyleBoldItalic;
+    else if (weight >= 600)      st = FontStyleBold;
+    else if (italic)             st = FontStyleItalic;
+    const Gdiplus::FontFamily* ff = mono ? g_gpMonoFamily : g_gpFamily;
+    f = new Font(ff, (REAL)std::max(6, px), st, UnitPixel);
+    if (f->GetLastStatus() == Gdiplus::Ok) return f;
+    delete f;
+    // last resort: default family, regular
+    return new Font(g_gpFamily, (REAL)std::max(6, px), FontStyleRegular, UnitPixel);
 }
 
 void ThemeText(Graphics& g, const std::wstring& text, HFONT font,

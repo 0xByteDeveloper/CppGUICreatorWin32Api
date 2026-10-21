@@ -73,7 +73,7 @@ namespace DesignerNS
         // ---- events ----
         y += 6 * scale;
         Row sec2; sec2.header = true; sec2.isEvent = false; sec2.evIndex = -1;
-        sec2.key = L"Olaylar (çift tık → VS'de kod)";
+        sec2.key = L"Olaylar (çift tık -> VS'de kod)";
         sec2.rc = { 0, (int)y, rc.right, (int)(y + 22 * scale) };
         rows.push_back(sec2);
         y += 24 * scale;
@@ -102,7 +102,8 @@ namespace DesignerNS
                 y += rowH;
             }
         }
-        InvalidateRect(hwnd, nullptr, FALSE);
+        // NOTE: no InvalidateRect here — RebuildRows runs inside WM_PAINT too;
+        // invalidating from paint caused an infinite repaint loop (100% CPU).
     }
 
     void Props::BeginEdit(int row)
@@ -169,6 +170,7 @@ namespace DesignerNS
         hEdit = nullptr;
         editRow = -1;
         RebuildRows();
+        InvalidateRect(hwnd, nullptr, FALSE);
         host->canvas->formRc = host->canvas->FormRect();
         InvalidateRect(host->canvas->hwnd, nullptr, FALSE);
         host->OnCanvasEdited();
@@ -250,6 +252,7 @@ namespace DesignerNS
                 return 0;
             case WM_USER_REFRESH:
                 RebuildRows();
+                InvalidateRect(h, nullptr, FALSE);
                 return 0;
             case WM_PAINT: {
                 BufferedPaint bp(h, TC(C_CARD));
@@ -523,10 +526,9 @@ namespace DesignerNS
         ProjectRecord* p = g_mw ? Store::FindProject(g_mw->recents, h->project) : nullptr;
         if (p && !p->sourceDir.empty()) dir = p->sourceDir;
         else {
-            wchar_t* up = nullptr;
-            _wdupenv_s(&up, nullptr, L"USERPROFILE");
-            std::wstring home = up ? up : L"C:\\Users\\Public";
-            free(up);
+            wchar_t up[MAX_PATH + 2];
+            DWORD n = GetEnvironmentVariableW(L"USERPROFILE", up, MAX_PATH + 2);
+            std::wstring home = (n > 0 && n < MAX_PATH + 2) ? up : L"C:\\Users\\Public";
             dir = home + L"\\Desktop\\CppGUIExport\\" + h->project;
         }
         if (!CreateDirDeepW(dir)) { if (err) *err = L"klasör oluşturulamadı: " + dir; return false; }

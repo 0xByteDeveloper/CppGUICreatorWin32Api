@@ -77,7 +77,7 @@ namespace TopBarNS
                 { L"Welcome", L"Projeler", L"Araç Kutusu", L"Görünüm", L"Bağlantı", L"Yardım" };
             float scale = ScaleF(hwnd);
             MeasureCtx mc(hwnd);
-            float x = 190 * scale;
+            float x = 230 * scale;
             RECT rc; GetClientRect(hwnd, &rc);
             float mid = (rc.bottom - rc.top) * 0.5f;
             (void)mid;
@@ -133,9 +133,9 @@ namespace TopBarNS
                 Graphics& g = *bp.g;
                 float scale = ScaleF(h);
                 FillRectC(g, 0, (float)bp.H() - 1, (float)bp.W(), 1, TC(C_BORDER));
-                // app title
+                // app title (items start at 230 so the brand never clips)
                 ThemeText(g, APP_NAME, Theme_Font(F_H2), TC(C_TEXT),
-                          RectF(16 * scale, 0, 170 * scale, (float)bp.H()),
+                          RectF(16 * scale, 0, 210 * scale, (float)bp.H()),
                           StringAlignmentNear, StringAlignmentCenter);
                 for (size_t i = 0; i < items.size(); i++) {
                     float pw = (float)(items[i].rc.right - items[i].rc.left);

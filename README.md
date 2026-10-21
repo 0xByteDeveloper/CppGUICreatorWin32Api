@@ -6,6 +6,40 @@
 
 ---
 
+## 📸 Ekran Görüntüleri (v1.0.1)
+
+Uygulamanın gerçek çalışır halinden (Wine + Xvfb üzerinde, üretim kodu yolu ile) alınmıştır — `screenshots/` klasöründe.
+
+| | |
+|---|---|
+| ![Welcome](screenshots/01_welcome_initial.png) | ![Projeler menüsü](screenshots/02_projeler_menu.png) |
+| ![Yeni Proje diyaloğu](screenshots/03_yeni_proje_dialog.png) | ![İsim girildi](screenshots/04_yeni_proje_typed.png) |
+| ![Tasarımcı](screenshots/05_designer_denemeapp.png) | ![Form Load olayı](screenshots/06_form_load_event.png) |
+| ![Araç Kutusu](screenshots/07_arac_kutusu.png) | ![Görünüm](screenshots/08_gorunum.png) |
+| ![Bağlantı](screenshots/09_baglanti.png) | ![Yardım](screenshots/10_yardim.png) |
+| ![Proje sonrası Welcome](screenshots/11_welcome_with_project.png) | ![Üç sekme](screenshots/12_three_tabs.png) |
+| ![Sekme kapandı](screenshots/13_tab_closed.png) | ![İki proje](screenshots/14_welcome_two_projects.png) |
+
+*Welcome Page, "Son Projeler" listesi zaman ters sırada:* ![Son Projeler](screenshots/15_welcome_son_projeler.png)
+
+---
+
+## 🩹 v1.0.1 Düzeltmeleri
+
+1. **`libc++.dll` / `libunwind.dll` hatası çözüldü** — exe artık **tam statik** derleniyor
+   (`-static -static-libgcc -static-libstdc++`, mingw-w64 GCC 14.2). Dış bağımlılık olarak yalnızca
+   Windows'un her kurulumda bulunan sistem DLL'leri kalır (`KERNEL32`, `USER32`, `GDI32`,
+   `COMCTL32`, `gdiplus`, `msvcrt`, `ole32`…). Ek DLL kopyalamaya gerek yoktur — tek exe her
+   Windows 10/11'de açılır.
+2. **Özellikler panelinde sonsuz boyama döngüsü giderildi** — `Props::WM_PAINT` içinde
+   `RebuildRows()` çağrısı pencereyi her karede yeniden geçersiz kılıyor (≈%60 CPU sürekli
+   yakıyor) ve mesaj kuyruğunu tıkıyordu. `InvalidateRect` yalnızca gerçekten gerektiren
+   çağrı noktalarına taşındı; bekleme CPU'su ≈%0.5'e düştü.
+3. **Diyalog kapanınca uygulamanın kapanması** giderildi (`WM_DESTROY` içindeki
+   `PostQuitMessage` kaldırıldı — popup diyaloğu artık yalnızca kendini kapatır).
+
+---
+
 ## 🚀 Uygulama (v1.0)
 
 ### Ekran düzeni (kullanıcı isteğine birebir)

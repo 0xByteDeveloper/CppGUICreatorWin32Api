@@ -10,6 +10,8 @@ using namespace Gdiplus;
 
 MainWindow* g_mw = nullptr;
 HWND        g_hMain = nullptr;
+bool        g_autotour = false;
+static void TourMark(int n);
 
 // locate the bundled W32GuiRuntime.h directory (dev tree or installed layout)
 static std::wstring RuntimeDir()
@@ -55,6 +57,12 @@ static LRESULT MainProc(HWND h, UINT m, WPARAM w, LPARAM l)
                 DesignerNS::SaveNow(self->tabs[self->active].host);
             DestroyWindow(h);
             return 0;
+        case WM_TIMER:
+            if (w == 0x7E57 && g_autotour) { self->TourTick(); return 0; }
+            break;
+        case WM_APP + 0x100:                       // tour: run modal flow from a
+            self->CreateNewProjectFlow();          // queued message (NOT from the
+            return 0;                              // timer tick — avoids deep re-entry)
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
@@ -582,4 +590,91 @@ void MainWindow::ExportActiveProject()
     } else {
         Status(L"Aktarma hatası: " + err);
     }
+}
+
+// ===========================================================================
+// AutoTour — scripted UI walkthrough for screenshot demos (--autotour)
+// Drives the REAL handlers on a WM_TIMER heartbeat (150 ms per tick), so every
+// screen is produced by the production code path. Marks are appended to
+// %TEMP%\tour_marks.log for the host-side screenshot sync.
+// ===========================================================================
+static FILE* g_tourLog  = nullptr;
+static int   g_tourTick = 0;
+
+static void TourMark(int n)
+{
+    if (!g_tourLog) {
+        wchar_t tmp[MAX_PATH];
+        GetTempPathW(MAX_PATH, tmp);
+        g_tourLog = _wfopen((std::wstring(tmp) + L"tour_marks.log").c_str(), L"w, ccs=UTF-8");
+    }
+    if (g_tourLog) { fwprintf(g_tourLog, L"[mark] %d\n", n); fflush(g_tourLog); }
+}
+
+void MainWindow::StartAutoTour()
+{
+    g_tourTick = 0;
+    SetTimer(g_hMain, 0x7E57, 150, nullptr);
+}
+
+void MainWindow::TourTick()
+{
+    static bool inTick = false;                        // re-entrancy guard: modal loops
+    if (inTick) return;                                // dispatch our WM_TIMER while we
+    inTick = true;                                     // are inside TourTick — skip those
+    g_tourTick++;
+    switch (g_tourTick) {
+        case 6:  TourMark(1); break;                       // initial Welcome
+        case 9:  SetMenu(MENU_PROJELER); break;
+        case 13: TourMark(2); break;                       // Projeler menu
+        case 15: TourShowNameDialogPeek(g_hMain, L""); break;  // dialog (no modal loop)
+        case 17: TourMark(3); break;                       // dialog visible
+        case 21: TourShowNameDialogPeek(g_hMain, L"DenemeApp"); break;
+        case 23: TourMark(4); break;                       // name typed
+        case 25: TourHideNameDialogPeek();
+                 OpenProjectTab(L"DenemeApp"); break;      // create for real
+        case 26: break;
+        case 27: break;
+        case 28: break;
+        case 29: TourMark(5); break;                       // designer (DenemeApp)
+        case 30: { // pre-attach a cpp so the dclick flow skips the file picker
+                   ProjectRecord* p = Store::FindProject(recents, L"DenemeApp");
+                   if (p && p->cppPath.empty()) {
+                       wchar_t tmp[MAX_PATH];
+                       GetTempPathW(MAX_PATH, tmp);
+                       std::wstring cpp = std::wstring(tmp) + L"DenemeApp.cpp";
+                       FILE* fp = _wfopen(cpp.c_str(), L"w, ccs=UTF-8");
+                       if (fp) { fwprintf(fp, L"// DenemeApp — tour target\n"); fclose(fp); }
+                       p->cppPath = cpp;
+                       Store::SaveProjects(recents);
+                   }
+                 } break;
+        case 31: OnFormDblClick(L"DenemeApp"); break;      // form dclick -> Load
+        case 35: TourMark(6); break;
+        case 37: SetMenu(MENU_ARAC); break;
+        case 41: TourMark(7); break;                       // toolbox catalog
+        case 43: SetMenu(MENU_GORUNUM); break;
+        case 47: TourMark(8); break;                       // view settings
+        case 49: SetMenu(MENU_BAGLANTI); break;
+        case 53: TourMark(9); break;                       // VS connection
+        case 55: SetMenu(MENU_YARDIM); break;
+        case 59: TourMark(10); break;                      // help/about
+        case 61: SetMenu(MENU_WELCOME); break;
+        case 65: TourMark(11); break;                      // welcome with project
+        case 67: TourShowNameDialogPeek(g_hMain, L"IkinciUygulama"); break;
+        case 71: TourHideNameDialogPeek();
+                 OpenProjectTab(L"IkinciUygulama"); break;
+        case 73: break;
+        case 75: break;
+        case 79: TourMark(12); break;                      // multiple tabs
+        case 81: { int wi = FindTabByProject(L"DenemeApp");
+                   if (wi > 0) CloseTab(wi); } break;
+        case 85: TourMark(13); break;                      // tab closed
+        case 87: SetMenu(MENU_WELCOME); break;
+        case 91: TourMark(14);                             // welcome, 2 projects
+                 KillTimer(g_hMain, 0x7E57);
+                 if (g_tourLog) { fclose(g_tourLog); g_tourLog = nullptr; }
+                 break;
+    }
+    inTick = false;
 }

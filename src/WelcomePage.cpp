@@ -133,7 +133,7 @@ namespace WelcomeNS
         // primary button: Yeni Proje
         float bw = 190 * scale, bh = 44 * scale;
         rcNew = { (int)pad, (int)(140 * scale), (int)(pad + bw), (int)(140 * scale + bh) };
-        DrawPill(g, pad, 140 * scale, bw, bh, L"＋ Yeni Proje",
+        DrawPill(g, pad, 140 * scale, bw, bh, L"+ Yeni Proje",
                  Theme_Font(F_BODY_SB),
                  hotNew ? TC(C_ACCENT_HOVER) : TC(C_ACCENT), TC(C_WHITE), hotNew);
         // secondary: VS'yi Tara
@@ -145,9 +145,9 @@ namespace WelcomeNS
         StrokeRound(g, sx, 140 * scale, sw, bh, bh / 2, TC(C_BORDER), 1.2f);
         // refresh (small, right of list header below? keep here for simplicity)
         float rx = sx + sw + 14 * scale;
-        float rw = 44 * scale;
+        float rw = 84 * scale;
         rcRefresh = { (int)rx, (int)(140 * scale), (int)(rx + rw), (int)(140 * scale + bh) };
-        DrawPill(g, rx, 140 * scale, rw, bh, L"↻", Theme_Font(F_BODY_SB),
+        DrawPill(g, rx, 140 * scale, rw, bh, L"Yenile", Theme_Font(F_BODY_SB),
                  TC(C_CARD), hotRefresh ? TC(C_ACCENT) : TC(C_TEXT2), hotRefresh);
         StrokeRound(g, rx, 140 * scale, rw, bh, bh / 2, TC(C_BORDER), 1.2f);
     }
@@ -155,7 +155,7 @@ namespace WelcomeNS
     void Self::PaintList(Graphics& g, const RECT& rc, float scale)
     {
         float pad = 40 * scale;
-        float y = 10 * scale;
+        float y = (float)rc.top + 10 * scale;
         // ---- section: running visual studio ----
         ThemeText(g, L"Çalışan Visual Studio (devenv.exe)", Theme_Font(F_H2), TC(C_TEXT),
                   RectF(pad, y, 480 * scale, 26 * scale),
@@ -212,7 +212,7 @@ namespace WelcomeNS
             pen.SetDashStyle(DashStyleDash);
             auto p = RoundPath(pad, y, (float)rc.right - pad * 2, eh, 14 * scale);
             g.DrawPath(&pen, p.get());
-            ThemeText(g, L"Henüz proje yok — \"＋ Yeni Proje\" ile başlayın veya "
+            ThemeText(g, L"Henüz proje yok — \"+ Yeni Proje\" ile başlayın veya "
                          L"VS2019'da bir çözüm açın.",
                       Theme_Font(F_BODY), TC(C_TEXT3),
                       RectF(pad, y, (float)rc.right - pad * 2, eh),

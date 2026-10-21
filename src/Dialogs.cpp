@@ -151,7 +151,9 @@ LRESULT NameDlg::Proc(HWND h, UINT m, WPARAM w, LPARAM l)
             return 0;
         }
         case WM_DESTROY:
-            PostQuitMessage(0);
+            // NOTE: no PostQuitMessage here — closing a popup dialog must not
+            // terminate the whole application; the modal loop exits via
+            // the IsWindow() check in ShowNameDialog/ShowInfoDialog.
             return 0;
     }
     return DefWindowProcW(h, m, w, l);
@@ -166,6 +168,52 @@ static LRESULT NameDlgProc(HWND h, UINT m, WPARAM w, LPARAM l)
     }
     auto* self = (NameDlg*)GetWindowLongPtrW(h, GWLP_USERDATA);
     return self ? self->Proc(h, m, w, l) : DefWindowProcW(h, m, w, l);
+}
+
+// ---------------------------------------------------------------------------
+// tour/demo peek — same visual as ShowNameDialog but without the modal loop
+// ---------------------------------------------------------------------------
+static NameDlg* g_peekDlg = nullptr;
+
+HWND TourShowNameDialogPeek(HWND parent, const std::wstring& typedText)
+{
+    if (!g_peekDlg) {
+        HINSTANCE inst = (HINSTANCE)GetWindowLongPtrW(parent, GWLP_HINSTANCE);
+        RegPopup(L"CGC_NameDlg", NameDlgProc, inst);
+        auto* dlg = new NameDlg();
+        dlg->title = L"Yeni Proje";
+        dlg->subtitle = L"Proje adı girin — bu ad yeni sekmenin başlığı olur";
+        dlg->initial = typedText;
+        int w = ScaleI(parent, 420), hh = ScaleI(parent, 220);
+        RECT pr; GetWindowRect(parent, &pr);
+        int x = pr.left + ((pr.right - pr.left) - w) / 2;
+        int y = pr.top + ((pr.bottom - pr.top) - hh) / 2;
+        dlg->hwnd = CreateWindowExW(WS_EX_TOOLWINDOW, L"CGC_NameDlg", nullptr,
+                                    WS_POPUP | WS_VISIBLE, x, y, w, hh,
+                                    parent, nullptr, inst, dlg);
+        dlg->hEdit = CreateWindowExW(0, L"EDIT", typedText.c_str(),
+                                     WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                                     ScaleI(dlg->hwnd, 30), ScaleI(dlg->hwnd, 90),
+                                     w - ScaleI(dlg->hwnd, 60), ScaleI(dlg->hwnd, 30),
+                                     dlg->hwnd, nullptr, inst, nullptr);
+        SendMessageW(dlg->hEdit, WM_SETFONT, (WPARAM)Theme_Font(F_BODY), TRUE);
+        SendMessageW(dlg->hEdit, EM_SETCUEBANNER, TRUE,
+                     (LPARAM)L"örn. MyForm");
+        SetFocus(dlg->hEdit);
+        dlg->Layout();
+        g_peekDlg = dlg;
+    }
+    if (g_peekDlg->hEdit) SetWindowTextW(g_peekDlg->hEdit, typedText.c_str());
+    return g_peekDlg ? g_peekDlg->hwnd : nullptr;
+}
+
+void TourHideNameDialogPeek()
+{
+    if (g_peekDlg) {
+        if (IsWindow(g_peekDlg->hwnd)) DestroyWindow(g_peekDlg->hwnd);
+        delete g_peekDlg;
+        g_peekDlg = nullptr;
+    }
 }
 
 NameDialogResult ShowNameDialog(HWND parent, const std::wstring& title,
@@ -310,7 +358,9 @@ LRESULT InfoDlg::Proc(HWND h, UINT m, WPARAM w, LPARAM l)
             return 0;
         }
         case WM_DESTROY:
-            PostQuitMessage(0);
+            // NOTE: no PostQuitMessage here — closing a popup dialog must not
+            // terminate the whole application; the modal loop exits via
+            // the IsWindow() check in ShowNameDialog/ShowInfoDialog.
             return 0;
     }
     return DefWindowProcW(h, m, w, l);
@@ -374,7 +424,7 @@ void ShowAboutDialog(HWND parent)
         L"  • Kapatılabilir sekmeler, ilk sekme: Welcome Page",
         L"  • Welcome Page: projeler en yeni önce + Yeni Proje",
         L"  • devenv.exe otomatik algılama (Running Object Table + Toolhelp)",
-        L"  • Çift tık → VS2019 öne gelir, .cpp açılır, satıra gidilir",
+        L"  • Çift tık -> VS2019 öne gelir, .cpp açılır, satıra gidilir",
         L"  • Win32 sender/e: W32Object* / W32EventArgs* (e->Handled)",
         L"  • Apple tarzı sade modern tema (GDI+, Segoe UI)",
         L"",

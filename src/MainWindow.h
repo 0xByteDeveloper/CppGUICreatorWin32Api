@@ -72,7 +72,13 @@ struct MainWindow
 
     // ---- misc commands ----
     void ExportActiveProject();
+
+    // ---- autotour (--autotour scripted screenshot demo) ----
+    void StartAutoTour();
+    void TourTick();
 };
+
+extern bool g_autotour;
 
 extern MainWindow* g_mw;          // global singleton (children call back)
 extern HWND        g_hMain;       // main hwnd (children notifications)

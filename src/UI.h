@@ -88,5 +88,9 @@ NameDialogResult ShowNameDialog(HWND parent, const std::wstring& title,
                                 const std::wstring& subtitle,
                                 const std::wstring& initial,
                                 const std::wstring& placeholder);
+// tour/demo-only: show the same name dialog WITHOUT its modal loop so a host
+// script can screenshot it; text is typed programmatically, then hide it.
+HWND TourShowNameDialogPeek(HWND parent, const std::wstring& typedText);
+void TourHideNameDialogPeek();
 void ShowAboutDialog(HWND parent);
 void ShowDependencyReport(HWND parent);
