@@ -46,6 +46,9 @@ static std::wstring EmitCreateCall(const Ctrl* c) {
     o << L"        " << styleExpr << L", " << c->x << L", " << c->y << L", " << c->w << L", " << c->h << L",\n";
     o << L"        " << parentVar << L", (HMENU)(INT_PTR)" << IdMacroOf(c->name) << L", hInst, NULL);\n";
     o << L"    SendMessageW(" << c->name << L", WM_SETFONT, (WPARAM)hFont, TRUE);\n";
+    // konteyner bildirim köprüsü: konteyner çocuklarının WM_COMMAND/WM_NOTIFY'ı forma taşınır
+    if (IsContainerType(c->type))
+        o << L"    SetWindowSubclass(" << c->name << L", ContainerBridgeProc, 1, 0);\n";
     // renk / font özellik notları
     if (c->props.count(L"Font") && c->Get(L"Font") != L"Segoe UI, 9pt")
         o << L"    // Font: " << c->Get(L"Font") << L"\n";
@@ -62,7 +65,7 @@ static std::wstring EmitCreateCall(const Ctrl* c) {
 
 std::wstring GenerateForm1Cpp() {
     std::wostringstream o;
-    o << L"// Form1.cpp — M2GodWin32 UI Designer (Faz 2.1) tarafından üretilmiştir.\n";
+    o << L"// Form1.cpp — M2GodWin32 UI Designer (Faz 2.2) tarafından üretilmiştir.\n";
     o << L"// Marker blokları (//== M2GOD:... ) tasarımcı senkronizasyonu içindir; dışını düzenleyebilirsiniz.\n\n";
     o << L"#include \"Form1.h\"\n";
     o << L"#include <commctrl.h>\n\n";
@@ -88,12 +91,24 @@ std::wstring GenerateForm1Cpp() {
     o << L"//== M2GOD:HANDLES-END\n\n";
     // CREATE — parent-sıralı: konteyner önce, alt kontroller sonra (aynı parent içinde
     // oluşturma sırası korunur; böylece HWND z-sırası tasarımla birebir aynıdır)
+    // NOT: Konteyner bildirim köprüsü CREATE bölgesi İÇİNDE tanımlanır; böylece senkron
+    // (SyncIntoFile) eski üretilmiş dosyalara köprüyü de beraberinde taşır.
     o << L"//== M2GOD:CREATE-BEGIN\n";
+    o << L"// Konteyner bildirim köprüsü: GroupBox/TabControl/Panel içine yaratılan alt kontrollerin\n";
+    o << L"// bildirimleri (WM_COMMAND/WM_NOTIFY) doğrudan konteynere gider; köprü bunları ana forma taşır.\n";
+    o << L"static LRESULT CALLBACK ContainerBridgeProc(HWND h, UINT m, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR) {\n";
+    o << L"    if (m == WM_COMMAND || m == WM_NOTIFY) {\n";
+    o << L"        HWND p = GetParent(h);\n";
+    o << L"        if (p) { SendMessageW(p, m, w, l); return 0; }\n";
+    o << L"    }\n";
+    o << L"    return DefSubclassProc(h, m, w, l);\n";
+    o << L"}\n\n";
     o << L"void InitializeControls(HWND hWnd) {\n";
     o << L"    HINSTANCE hInst = GetModuleHandleW(NULL);\n";
     o << L"    EnsureStatics(hInst);\n";
     std::function<void(Ctrl*)> emitBranch = [&](Ctrl* parent) {
         for (auto* c : g_model.ChildrenOf(parent)) {
+            if (c->nonVisual) continue; // bileşenler sonda tek kez üretilir (çift Timer yorumu olmasın)
             o << EmitCreateCall(c) << L"\n";
             emitBranch(c);
         }
@@ -200,7 +215,7 @@ std::wstring GenerateForm1Cpp() {
 
 std::wstring GenerateForm1H() {
     std::wostringstream o;
-    o << L"// Form1.h — M2GodWin32 UI Designer (Faz 2.1) tarafından üretilmiştir.\n";
+    o << L"// Form1.h — M2GodWin32 UI Designer (Faz 2.2) tarafından üretilmiştir.\n";
     o << L"#pragma once\n";
     o << L"#include <windows.h>\n\n";
     o << L"namespace M2GodForm {\n\n";
@@ -330,10 +345,12 @@ int SyncIntoFile(const std::wstring& cppPath, const std::wstring& hPath,
         return 0;
     }
     // bölge içerikleri
+    // NOT: HANDLES bölgesi TİPLİ tanım içermeli (HWND x = NULL;) — tipsiz 'x = NULL;'
+    // global alanda geçersizdir (C2040/C4430 derleme hatası)
     std::wostringstream handles;
     for (auto* c : g_model.ctrls) {
         if (c->nonVisual) continue;
-        handles << c->name << L" = NULL;\n";
+        handles << L"HWND " << c->name << L" = NULL;\n";
     }
     ReplaceRegion(cpp, L"//== M2GOD:HANDLES-BEGIN", L"//== M2GOD:HANDLES-END", handles.str());
     // CREATE bölgesi: fonksiyon gövdesini yeniden üret
@@ -343,6 +360,15 @@ int SyncIntoFile(const std::wstring& cppPath, const std::wstring& hPath,
     if (cb != std::wstring::npos && ce != std::wstring::npos) {
         std::wstring createBody = fresh.substr(cb + wcslen(L"//== M2GOD:CREATE-BEGIN"), ce - (cb + wcslen(L"//== M2GOD:CREATE-BEGIN")));
         ReplaceRegion(cpp, L"//== M2GOD:CREATE-BEGIN", L"//== M2GOD:CREATE-END", createBody);
+    }
+    // WNDPROC bölgesi de tazelenir: yeni bağlanan olaylar WM_COMMAND yönlendirmesine
+    // yazılsın (aksi halde üretilen uygulamada tıklamalar tetiklenmez)
+    size_t wb = fresh.find(L"//== M2GOD:WNDPROC-BEGIN");
+    size_t we = fresh.find(L"//== M2GOD:WNDPROC-END");
+    if (wb != std::wstring::npos && we != std::wstring::npos &&
+        HasRegion(cpp, L"//== M2GOD:WNDPROC-BEGIN")) {
+        std::wstring wndBody = fresh.substr(wb + wcslen(L"//== M2GOD:WNDPROC-BEGIN"), we - (wb + wcslen(L"//== M2GOD:WNDPROC-BEGIN")));
+        ReplaceRegion(cpp, L"//== M2GOD:WNDPROC-BEGIN", L"//== M2GOD:WNDPROC-END", wndBody);
     }
     WriteFileText(cppPath, WideToUtf8(cpp));
     // header bölgeleri

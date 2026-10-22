@@ -1,14 +1,38 @@
-# M2GodWin32 — Faz 2.1 God Mode MVP
+# M2GodWin32 — Faz 2.2 God Mode MVP
 
 **Visual Studio 2019 C++ CLR Form Designer deneyimini Win32 API ile yaşatan, tam kapsamlı görsel UI tasarım ortamı.**
 
-> Bu proje `CppGUICreatorWin32Api` deposunun **Faz 2.1** geliştirme aşamasıdır.
+> Bu proje `CppGUICreatorWin32Api` deposunun **Faz 2.2** geliştirme aşamasıdır.
 > Katalog kaynağı olarak depodaki **Config_info.json** (.NET Framework WinForms tam eleman kataloğu: 144 eleman, tüm property'ler + event'ler + 203 enum) kullanılır.
 
 
 ---
 
-## Faz 2.1 — Yenilikler (Geri bildirim üzerine)
+## Faz 2.2 — Yenilikler (kullanıcı geri bildirimi üzerine)
+
+| Düzeltme | Ayrıntı |
+|---|---|
+| **"Özellikler/Olaylar'da her şey seçili" DÜZELTİLDİ** | Kök neden: `ListView_SetItemText` makrosu **maskesiz (uninitialized) LV_ITEM** gönderiyordu; çöp mask `LVIF_STATE` bitini içerince satırlara rastgele `LVIS_SELECTED` yapışiyordu. Artık açık maskeli güvenli setter kullanılıyor + seçim durumu tasarımcı tarafında takip ediliyor (`CDIS_SELECTED`'a güvenilmez) |
+| **Özellik değişimi artık çalışıyor** | Satır içi düzenleyici ENTER ile işler, **ESC** vazgeçer; hücreye tıklayınca açılan kutu değeri **seçili** getirir (yazınca eskisi değişir — VS davranışı). Değişim anında tuval ve kod güncellenir |
+| **Düzenleme kutusu "aşırı yukarda" DÜZELTİLDİ** | Kutu, liste-client koordinatları panele `MapWindowPoints` ile çevrilerek **tam satırın üstünde** açılır; aynı satıra tekrar tıklamak düzenlemeyi bozmaz |
+| **C2040 derleme hatası DÜZELTİLDİ** | `SyncIntoFile` HANDLES bölgesini **tipsiz** (`button1 = NULL;`) yeniden yazıyordu → global alanda geçersiz. Artık `HWND button1 = NULL;` üretir (ilk üretim de senkron da tutarlı) |
+| **Butona tıklayınca MessageBox çıkmıyordu — DÜZELTİLDİ** | Senkron WNDPROC bölgesini tazelemiyordu; yeni bağlanan olaylar **boş `switch(id)`** içinde kalıyordu. Artık WM_COMMAND yönlendirme tablosu her senkronda güncellenir: `case M2GodForm::IDC_BUTTON1: if (ev == BN_CLICKED) M2GodForm::button1_Click(hWnd);` |
+| **Konteyner bildirim köprüsü** | GroupBox/TabControl/Panel içine yaratılan çocukların `WM_COMMAND/WM_NOTIFY`'ı köprü prosedürle ana forma taşınır (`SetWindowSubclass`) — iç içe kontrollerin olayları da çalışır |
+| **Çift `// Timer:` üretimi giderildi** | Bileşenler CREATE bölgesinde tek kez üretilir |
+| **Kolon taşması giderildi** | Özellik adı kolonu başlık genişliğine kırpılır (GetSubItemRect(0) satırın tamamını döndürdüğü için uzun adlar Değer kolonuna taşıyordu) |
+| **Olay çift tıkı korundu** | Aynı satır düzenleme koruması, olay satırındaki çift tıkla handler üretimini engellemiyor |
+
+### Faz 2.2 doğrulama kanıtları (Wine + otomasyon)
+- Boş form → tıkla-yerleştir → özellik paneli düzgün (hersatı beyaz, tek satır seçili)
+- Text hücresi → kutu **tam satırda** + değer seçili → `Deneme` yazılır → ENTER → tuvalde buton metni değişti
+- Olaylar sekmesi → Click çift tık → `button1_Click` otomatik üretildi
+- F6 üretim → üretilen `Form1.cpp`: `HWND button1 = NULL;` + WM_COMMAND case + konteyner köprüsü + iç içe yaratım
+- Üretilen kod mingw ile derlendi → Form1.exe çalıştı → **butona tıklayınca MessageBox (Mause/Test) ortaya çıktı**
+- `SyncIntoFile` birim testi (tests/harness.cpp): kullanıcının C2040'lı bozuk Form1.cpp'si senkronla onarıldı; **kullanıcı kodu (MessageBoxA gövdesi) korundu**; 8/8 doğrulama geçti; onarılan dosya derlendi
+
+---
+
+## Faz 2.1 — Yenilikler
 
 | Düzeltme / Yeni Özellik | Ayrıntı |
 |---|---|

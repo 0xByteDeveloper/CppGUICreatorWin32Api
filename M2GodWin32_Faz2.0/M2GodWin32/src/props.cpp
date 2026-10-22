@@ -24,6 +24,20 @@ static HWND s_edit = nullptr, s_combo = nullptr;   // satır içi düzenleyicile
 static int  s_editRow = -1, s_editCol = -1;
 static std::vector<Row> s_rows;
 static int s_mode = 0; // 0: özellikler, 1: olaylar
+static int s_selRow = -1; // kendi takip ettiğimiz seçim (ListView state'ine güvenmiyoruz)
+
+// GÜVENLİ metin güncelleyici: ListView_SetItemText makrosu maskesiz (uninitialized)
+// LV_ITEM gönderir; çöp mask LVIF_STATE biti içerirse rastgele LVIS_SELECTED uygulanır
+// ("tüm satırlar seçili" hatasının kök nedeni). Burada maske açıkça LVIF_TEXT.
+static void SetRowText(int row, int col, const std::wstring& t) {
+    if (row < 0 || row >= (int)s_rows.size()) return;
+    LVITEMW lv = { 0 };
+    lv.mask = LVIF_TEXT;
+    lv.iItem = row;
+    lv.iSubItem = col;
+    lv.pszText = (LPWSTR)t.c_str();
+    SendMessageW(s_list, LVM_SETITEMTEXTW, (WPARAM)row, (LPARAM)&lv);
+}
 
 static bool IsEnumProp(const Row& r, std::vector<std::pair<std::wstring, int>>* vals) {
     if (r.enumType.empty()) return false;
@@ -36,6 +50,7 @@ static bool IsEnumProp(const Row& r, std::vector<std::pair<std::wstring, int>>* 
 static void EndEdit(HWND panel, bool commit);
 static void FillRows();
 static void SyncList();
+static void SubclassEditor(HWND h);   // satır içi edit/combo alt sınıfı (Enter/ESC)
 
 // --- değer uygulama -----------------------------------------------------------
 static void ApplyRowValue(Row& r, const std::wstring& val) {
@@ -110,7 +125,10 @@ static void BeginEdit(HWND panel, int row) {
     Row& r = s_rows[row];
     if (r.readOnly) return;
     RECT rc;
-    ListView_GetSubItemRect(s_list, row, 1, LVIR_BOUNDS, &rc);
+    if (!ListView_GetSubItemRect(s_list, row, 1, LVIR_BOUNDS, &rc)) return;
+    // GetSubItemRect liste-client koordinatı verir; edit panel'in çocuğu → panele çevir
+    // (yoksa kutu satırın çok üstünde, "aşırı yukarda" belirir)
+    MapWindowPoints(s_list, panel, (LPPOINT)&rc, 2);
     if (r.isEvent || _wcsicmp(r.type.c_str(), L"System.String") == 0 || r.type.empty() ||
         _wcsicmp(r.type.c_str(), L"System.Int32") == 0 ||
         r.type.find(L"Point") != std::wstring::npos || r.type.find(L"Size") != std::wstring::npos ||
@@ -132,7 +150,10 @@ static void BeginEdit(HWND panel, int row) {
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
             panel, (HMENU)1151, g_hInst, nullptr);
         SendMessageW(s_edit, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
+        SubclassEditor(s_edit);
         SetFocus(s_edit);
+        // VS gibi: açılışta tüm metin seçili — yazmaya başlayınca eskisi değişir
+        PostMessageW(s_edit, EM_SETSEL, 0, -1);
         s_editRow = row; s_editCol = 1;
         return;
     }
@@ -152,9 +173,25 @@ static void BeginEdit(HWND panel, int row) {
         for (size_t i = 0; i < opts.size(); i++) if (_wcsicmp(opts[i].c_str(), r.value.c_str()) == 0) { cur = (int)i; break; }
         SendMessageW(s_combo, CB_SETCURSEL, cur, 0);
         SendMessageW(s_combo, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
+        SubclassEditor(s_combo);
         SetFocus(s_combo);
         s_editRow = row; s_editCol = 1;
     }
+}
+
+// satır içi düzenleyici alt sınıfı: ENTER işle, ESC vazgeç (VS davranışı)
+static LRESULT CALLBACK EditorSubProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    WNDPROC old = (WNDPROC)GetWindowLongPtrW(h, GWLP_USERDATA);
+    if (m == WM_KEYDOWN && (w == VK_RETURN || w == VK_ESCAPE)) {
+        EndEdit(s_panel, w == VK_RETURN);
+        return 0;
+    }
+    if (m == WM_GETDLGCODE && w == VK_RETURN) return DLGC_WANTALLKEYS;
+    return old ? CallWindowProcW(old, h, m, w, l) : DefWindowProcW(h, m, w, l);
+}
+static void SubclassEditor(HWND h) {
+    WNDPROC old = (WNDPROC)SetWindowLongPtrW(h, GWLP_WNDPROC, (LONG_PTR)EditorSubProc);
+    SetWindowLongPtrW(h, GWLP_USERDATA, (LONG_PTR)old);
 }
 
 static void EndEdit(HWND panel, bool commit) {
@@ -176,6 +213,7 @@ static void EndEdit(HWND panel, bool commit) {
     if (commit && row < (int)s_rows.size()) {
         ApplyRowValue(s_rows[row], val);
         FillRows(); SyncList();
+        if (s_selRow >= (int)s_rows.size()) s_selRow = -1;
     }
 }
 
@@ -269,8 +307,12 @@ static void SyncList() {
         it.pszText = (LPWSTR)s_rows[i].name.c_str();
         int idx = ListView_InsertItem(s_list, &it);
         if (idx >= 0)
-            ListView_SetItemText(s_list, idx, 1, (LPWSTR)s_rows[i].value.c_str());
+            SetRowText(idx, 1, s_rows[i].value);
     }
+    // seçim durumunu AÇIKÇA kur: ekleme sonrası çöp LVIS durumları kalabilir
+    ListView_SetItemState(s_list, -1, 0, LVIS_SELECTED | LVIS_FOCUSED);
+    if (s_selRow >= 0 && s_selRow < (int)s_rows.size())
+        ListView_SetItemState(s_list, s_selRow, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
     InvalidateRect(s_list, nullptr, FALSE);
     // başlık: seçim bilgisi
     std::wstring cap;
@@ -291,11 +333,13 @@ static LRESULT ListCustomDraw(NMLVCUSTOMDRAW* ncd) {
         RECT rc1; ListView_GetSubItemRect(s_list, row, 1, LVIR_BOUNDS, &rc1);
         // kategori çizgisi: kategori değişince kalın ayraç (basit)
         Row& r = s_rows[row];
-        bool sel = (ncd->nmcd.uItemState & CDIS_SELECTED) != 0;
+        bool sel = (row == s_selRow);   // kendi takibimiz — uItemState'e güvenme
         HBRUSH br = CreateSolidBrush(sel ? RGB(204, 232, 255) : (row % 2 ? RGB(255, 255, 255) : RGB(248, 248, 248)));
         FillRect(dc, &rc, br); DeleteObject(br);
-        // kolon 0: ad
-        RECT c0; ListView_GetSubItemRect(s_list, row, 0, LVIR_BOUNDS, &c0);
+        // kolon 0: ad — NOT: GetSubItemRect(iSubItem=0) SATIRIN TAMAMINI döndürür;
+        // kolon-0 genişliğini başlıktan al (uzun ad değerin üzerine taşmasın)
+        int w0 = ListView_GetColumnWidth(s_list, 0);
+        RECT c0 = rc; c0.right = c0.left + w0;
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, RGB(60, 60, 60));
         RECT t0 = c0; t0.left += 6; t0.right = c0.right - 4;
@@ -323,21 +367,36 @@ static LRESULT CALLBACK PanelProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         NMHDR* nm = (NMHDR*)l;
         if (nm->idFrom == IDC_PROPS_LIST) {
             if (nm->code == NM_CUSTOMDRAW) return ListCustomDraw((NMLVCUSTOMDRAW*)l);
+            if (nm->code == LVN_ITEMCHANGED) {
+                NMLISTVIEW* nl = (NMLISTVIEW*)l;
+                if (nl->uChanged & LVIF_STATE) {
+                    int r = (int)nl->iItem;
+                    bool nowSel = (nl->uNewState & LVIS_SELECTED) != 0;
+                    if (nowSel && r >= 0 && r < (int)s_rows.size()) s_selRow = r;
+                    else if (!nowSel && r == s_selRow && !(nl->uOldState & LVIS_SELECTED)) { /* yoksay */ }
+                }
+                return 0;
+            }
             if (nm->code == NM_CLICK || nm->code == NM_DBLCLK) {
                 NMITEMACTIVATE* ia = (NMITEMACTIVATE*)l;
                 if (ia->iItem < 0 || ia->iItem >= (int)s_rows.size()) return 0;
+                s_selRow = ia->iItem;
                 if (ia->iItem >= 0 && ia->iSubItem == 1) {
+                    // ÖNCE olay çift tıkı: açık düzenleyiciyi kapatıp handler üret
+                    // (aynı satır koruması olay üretimini engellememeli)
                     if (nm->code == NM_DBLCLK && s_rows[ia->iItem].isEvent) {
                         Row& r = s_rows[ia->iItem];
                         // varsayılan handler adı üret
                         std::wstring def;
                         if (g_model.formSelected || !g_model.selected) def = L"Form1_" + r.name;
                         else def = g_model.HandlerNameOf(g_model.selected, r.name);
+                        EndEdit(h, false);
                         if (r.value.empty()) { ApplyRowValue(r, def); FillRows(); SyncList(); }
                         wchar_t* heap = _wcsdup(r.name.c_str());
                         PostMessageW(g_hMain, MWM_EVENT_DBLCLICK, (WPARAM)(g_model.selected), (LPARAM)heap);
                         return 0;
                     }
+                    if (s_editRow == ia->iItem && (s_edit || s_combo)) return 0; // aynı satır — düzenlemeye devam
                     BeginEdit(h, ia->iItem);
                 } else EndEdit(h, true);
                 return 0;
@@ -441,8 +500,13 @@ HWND Create(HWND parent) {
 void Refresh(HWND panel) {
     (void)panel;
     EndEdit(s_panel, false);
+    s_selRow = -1; // satır kümesi değişti — eski seçim anlamsız
     FillRows(); SyncList();
     InvalidateRect(s_caption, nullptr, TRUE);
+}
+
+bool IsEditing() {
+    return s_editRow >= 0 && (s_edit || s_combo);
 }
 
 // SÜRÜKLEME SIRASINDA hafif güncelleme: liste yeniden kurulmaz (flicker yok),
@@ -458,10 +522,10 @@ void UpdateLiveGeometry() {
         if (s_rows[i].isEvent) continue;
         if (s_rows[i].name == L"Location") {
             s_rows[i].value = b1;
-            ListView_SetItemText(s_list, i, 1, b1);
+            SetRowText(i, 1, b1);
         } else if (s_rows[i].name == L"Size") {
             s_rows[i].value = b2;
-            ListView_SetItemText(s_list, i, 1, b2);
+            SetRowText(i, 1, b2);
         }
     }
     InvalidateRect(s_list, nullptr, FALSE);

@@ -286,7 +286,7 @@ static int ShowWelcomeDialog(std::wstring& openPath) {
     EnsureDialogClass();
     int result = 0;
     HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"M2GOD_CODEDLG",
-        L"M2GodWin32 Faz 2.1 — Başlangıç", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        L"M2GodWin32 Faz 2.2 — Başlangıç", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         360, 200, 640, 420, nullptr, nullptr, g_hInst, nullptr);
     SetWindowLongW(dlg, GWL_STYLE, (GetWindowLongW(dlg, GWL_STYLE) & ~WS_MAXIMIZEBOX) | WS_CAPTION);
     HWND hint = CreateWindowExW(0, L"STATIC",
@@ -740,7 +740,7 @@ static LRESULT CALLBACK FrameProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             return 0;
         case CMD_ABOUT:
             MessageBoxW(h,
-                L"M2GodWin32 — Faz 2.1 God Mode MVP\n\n"
+                L"M2GodWin32 — Faz 2.2 God Mode MVP\n\n"
                 L"Win32 API Görsel Form Tasarımcısı\n"
                 L"• Config_info.json kataloğu ile tüm .NET elemanları\n"
                 L"• Sürükle-bırak VE tıkla-yerleştir (ESC = iptal)\n"
@@ -761,7 +761,7 @@ static LRESULT CALLBACK FrameProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case MWM_MODEL_CHANGED:
         g_modelDirty = true;
         {
-            std::wstring t = L"M2GodWin32 Faz 2.1";
+            std::wstring t = L"M2GodWin32 Faz 2.2";
             if (!s_file.empty()) t += L" — " + GetFileName(s_file) + (g_modelDirty ? L" *" : L"");
             SetWindowTextW(h, t.c_str());
         }
@@ -843,7 +843,7 @@ int Run(HINSTANCE hInst, LPWSTR cmdLine) {
     wc.lpszClassName = L"M2GOD_MAIN";
     wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(1));
     RegisterClassW(&wc);
-    HWND h = CreateWindowExW(0, L"M2GOD_MAIN", L"M2GodWin32 Faz 2.1 — God Mode MVP",
+    HWND h = CreateWindowExW(0, L"M2GOD_MAIN", L"M2GodWin32 Faz 2.2 — God Mode MVP",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         8, 8, 1424, 856, nullptr, nullptr, hInst, nullptr);
     g_hMain = h;
@@ -889,6 +889,8 @@ int Run(HINSTANCE hInst, LPWSTR cmdLine) {
                 bool ctrlKey = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
                 if (vk == VK_DELETE || vk == VK_BACK || (ctrlKey && (vk == 'C' || vk == 'X' || vk == 'V' || vk == 'Z' || vk == 'Y')))
                     skipAccel = true;
+                // Özellik panelinde satır içi düzenleyici açıksa ESC düzenleyiciye gitsin (vazgeç)
+                if (vk == VK_ESCAPE && props::IsEditing()) skipAccel = true;
             }
         }
         if (!skipAccel && TranslateAcceleratorW(h, acc, &msg)) continue;
