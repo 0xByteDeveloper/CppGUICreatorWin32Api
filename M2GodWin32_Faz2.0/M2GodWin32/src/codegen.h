@@ -28,4 +28,11 @@ bool ImportLegacyGenerated(const std::wstring& cppPath);
 // ID sabiti adı: button1 → IDC_BUTTON1
 std::wstring IdMacroOf(const std::wstring& ctrlName);
 
+// Faz 2.4: Global.h (M2God nesne sarmalayıcı kütüphanesi) üretimi
+// Kullanıcı olay kodlarında WinForms benzeri sözdizimi kullanabilir:
+//   timer1->Enabled = false;  button1->Text = L"Merhaba";
+std::wstring GenerateGlobalH();
+// Global.h sürüm imzası (dosya güncel mi kontrolü için)
+const char* GlobalVersionMark();
+
 } // namespace codegen

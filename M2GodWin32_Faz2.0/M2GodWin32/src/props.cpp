@@ -27,6 +27,13 @@ static std::vector<Row> s_rows;
 static int s_mode = 0; // 0: özellikler, 1: olaylar
 static int s_selRow = -1; // kendi takip ettiğimiz seçim (ListView state'ine güvenmiyoruz)
 
+// ERTelenmiş commit: combo bildirimi (CBN_SELCHANGE/SELENDOK/KILLFOCUS) işlenirken
+// DestroyWindow ÇAĞRILMAZ — Windows bunu davranış bozukluğu yapar ("comboboxa
+// tıklayınca kayboluyor" şikayetinin kök nedeni). Commit, bildirim bitince kuyruktan gelir.
+static const UINT MWM_PROPS_COMMIT = WM_APP + 21;
+static UINT s_commitSeq = 0;   // bayat commit mesajlarını geçersiz kılmak için
+static void PostCommit(HWND panel) { s_commitSeq++; PostMessageW(panel, MWM_PROPS_COMMIT, s_commitSeq, 0); }
+
 // GÜVENLİ metin güncelleyici: ListView_SetItemText makrosu maskesiz (uninitialized)
 // LV_ITEM gönderir; çöp mask LVIF_STATE biti içerirse rastgele LVIS_SELECTED uygulanır
 // ("tüm satırlar seçili" hatasının kök nedeni). Burada maske açıkça LVIF_TEXT.
@@ -150,6 +157,8 @@ static void BeginEdit(HWND panel, int row) {
             SubclassComboInner(s_combo);
             SetFocus(s_combo);
             s_editRow = row; s_editCol = 1;
+            // FAZ 2.4: tek tık — hücreye tıklayınca açılır liste HEMEN açılır
+            PostMessageW(s_combo, CB_SHOWDROPDOWN, TRUE, 0);
             return;
         }
         if (isFont) {
@@ -165,6 +174,8 @@ static void BeginEdit(HWND panel, int row) {
             SubclassComboInner(s_combo);
             SetFocus(s_combo);
             s_editRow = row; s_editCol = 1;
+            // FAZ 2.4: tek tık — açılır liste hemen açılır
+            PostMessageW(s_combo, CB_SHOWDROPDOWN, TRUE, 0);
             return;
         }
         s_edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", r.value.c_str(),
@@ -197,6 +208,9 @@ static void BeginEdit(HWND panel, int row) {
         SubclassEditor(s_combo);
         SetFocus(s_combo);
         s_editRow = row; s_editCol = 1;
+        // FAZ 2.4: tek tık — enum/bool hücresine tıklayınca açılır liste HEMEN açılır
+        // (kullanıcı artık ikinci kez komboya tıklamak zorunda kalmaz)
+        PostMessageW(s_combo, CB_SHOWDROPDOWN, TRUE, 0);
     }
 }
 
@@ -421,6 +435,11 @@ static LRESULT ListCustomDraw(NMLVCUSTOMDRAW* ncd) {
 
 // --- panel prosedürü -------------------------------------------------------------
 static LRESULT CALLBACK PanelProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    // ertelenmiş commit: combo/edit bildirimi bittikten sonra güvenli uygulanır
+    if (m == MWM_PROPS_COMMIT) {
+        if (w == s_commitSeq) EndEdit(h, true);   // bayat mesajlar yok sayılır
+        return 0;
+    }
     switch (m) {
     case WM_NOTIFY: {
         NMHDR* nm = (NMHDR*)l;
@@ -480,12 +499,23 @@ static LRESULT CALLBACK PanelProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             InvalidateRect(s_caption, nullptr, TRUE);
             return 0;
         }
-        if (id == 1150 && (note == CBN_SELCHANGE || note == CBN_KILLFOCUS || note == CBN_SELENDOK)) {
-            EndEdit(h, true);   // dropdown'dan seçim / odak kaybı → değer uygulanır
-            return 0;
+        if (id == 1150) {
+            // dropdown'dan seçim / kapanış / odak kaybı → ERTelenmiş commit
+            // (bildirim içinde combo'yu yok etmek yerine kuyruğa bırakılır)
+            if (note == CBN_SELCHANGE || note == CBN_SELENDOK) {
+                PostCommit(h);
+                return 0;
+            }
+            if (note == CBN_KILLFOCUS) {
+                // açılır liste hâlâ açıksa bu odak geçişi normaldir — commit YOK
+                if (s_combo && SendMessageW(s_combo, CB_GETDROPPEDSTATE, 0, 0)) return 0;
+                PostCommit(h);
+                return 0;
+            }
+            if (note == CBN_CLOSEUP || note == CBN_DROPDOWN) return 0;
         }
         if (id == 1151 && note == EN_KILLFOCUS) {
-            EndEdit(h, true);   // metin düzenleyiciden tıklayarak ayrılma → uygula
+            PostCommit(h);   // metin düzenleyiciden tıklayarak ayrılma → ertelenmiş uygula
             return 0;
         }
         break;

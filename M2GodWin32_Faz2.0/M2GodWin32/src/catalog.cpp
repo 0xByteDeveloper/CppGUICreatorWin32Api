@@ -158,6 +158,19 @@ bool Catalog::Load(const std::wstring& configPath) {
     }
     if (!loaded) { AddBuiltin(); return false; }
 
+    // Timer bileşenine Interval/Enabled özellikleri garanti edilir (Faz 2.4:
+    // üretilen kod SetTimer/WM_TIMER kullanır; panelde Interval/Enabled görünür)
+    auto tit = elements.find(L"Timer");
+    if (tit != elements.end()) {
+        bool hasI = false, hasE = false;
+        for (auto& p : tit->second.props) {
+            if (_wcsicmp(p.name.c_str(), L"Interval") == 0) hasI = true;
+            if (_wcsicmp(p.name.c_str(), L"Enabled") == 0) hasE = true;
+        }
+        if (!hasI) tit->second.props.push_back({ L"Interval", L"System.Int32", L"Behavior", L"1000", L"", true, true });
+        if (!hasE) tit->second.props.push_back({ L"Enabled", L"System.Boolean", L"Behavior", L"False", L"", true, true });
+    }
+
     // Form + temel kapsayıcı elemanlarının katalogda garanti edilmesi
     if (!elements.count(L"Form")) {
         ElementDef f;

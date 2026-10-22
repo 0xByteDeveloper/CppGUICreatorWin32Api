@@ -509,6 +509,13 @@ static bool InjectIntoVcxproj(const std::wstring& vcxprojPath) {
             }
         }
     }
+    if (text.find(L"Global.h") == std::wstring::npos) {
+        size_t p = text.find(L"</ItemGroup>");
+        if (p != std::wstring::npos) {
+            text.insert(p, L"  <ClInclude Include=\"Global.h\" />\n");
+            changed = true;
+        }
+    }
     if (text.find(L"Form1.cpp") == std::wstring::npos) {
         size_t p = text.find(L"</ItemGroup>");
         if (p != std::wstring::npos) {
@@ -545,6 +552,13 @@ bool PrepareProjectFiles() {
     bool created = false;
     if (!FileExists(h)) { WriteFileText(h, WideToUtf8(codegen::GenerateForm1H())); created = true; }
     if (!FileExists(cpp)) { WriteFileText(cpp, WideToUtf8(codegen::GenerateForm1Cpp())); created = true; }
+    // Global.h (M2God sarmalayıcı kütüphanesi): yoksa veya sürüm eskiyse yaz (Faz 2.4)
+    {
+        std::wstring gh = dir + L"\\Global.h";
+        std::string cur;
+        if (!ReadFileText(gh, cur) || cur.find(codegen::GlobalVersionMark()) == std::string::npos)
+            WriteFileText(gh, WideToUtf8(codegen::GenerateGlobalH()));
+    }
     // DTE varsa Solution Explorer'da göster
     if (g_conn.dte) {
         Disp d(g_conn.dte);
@@ -581,6 +595,13 @@ static bool AddFormFilesToProject(const VSInstance& inst) {
     bool created = false;
     if (!FileExists(h)) { WriteFileText(h, WideToUtf8(codegen::GenerateForm1H())); created = true; }
     if (!FileExists(cpp)) { WriteFileText(cpp, WideToUtf8(codegen::GenerateForm1Cpp())); created = true; }
+    // Global.h (M2God sarmalayıcı kütüphanesi): yoksa veya sürüm eskiyse yaz (Faz 2.4)
+    {
+        std::wstring gh = dir + L"\\Global.h";
+        std::string cur;
+        if (!ReadFileText(gh, cur) || cur.find(codegen::GlobalVersionMark()) == std::string::npos)
+            WriteFileText(gh, WideToUtf8(codegen::GenerateGlobalH()));
+    }
     if (inst.dte) {
         Disp d(inst.dte);
         VARIANT solv = d.Get(L"Solution");

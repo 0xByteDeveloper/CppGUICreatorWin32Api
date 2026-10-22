@@ -5,7 +5,7 @@ cd "$(dirname "$0")"   # proje klasörü (build/ ve src/ burada)
 export PATH=/home/z/tools/deb/root/usr/bin:$PATH
 mkdir -p Bin obj
 echo "[1/3] Kaynak (.rc) derleniyor..."
-x86_64-w64-mingw32-windres build/app.rc -O coff -o obj/app.res
+x86_64-w64-mingw32-windres app.rc -O coff -o obj/app.res
 echo "[2/3] C++ kaynakları derleniyor..."
 SRCS="src/main.cpp src/utils.cpp src/json.cpp src/catalog.cpp src/model.cpp src/factory.cpp src/surface.cpp src/toolbox.cpp src/props.cpp src/codegen.cpp src/vsint.cpp src/mainwnd.cpp"
 FLAGS="-std=c++17 -municode -O2 -Isrc -Wall -Wno-unused-function"

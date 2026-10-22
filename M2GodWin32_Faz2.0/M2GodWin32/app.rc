@@ -1,0 +1,27 @@
+// app.rc — M2GodWin32 sürüm kaynağı
+#include <windows.h>
+
+#define VER_MAJOR 2
+#define VER_MINOR 4
+#define VER_PATCH 0
+
+1 VERSIONINFO
+FILEVERSION    VER_MAJOR,VER_MINOR,VER_PATCH,0
+PRODUCTVERSION VER_MAJOR,VER_MINOR,VER_PATCH,0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "FileDescription", "M2GodWin32 UI Designer (Win32 API)"
+      VALUE "ProductName",     "M2GodWin32"
+      VALUE "FileVersion",     "2.4.0.0"
+      VALUE "ProductVersion",  "2.4.0.0"
+      VALUE "OriginalFilename","M2GodWin32.exe"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 1200
+  END
+END
