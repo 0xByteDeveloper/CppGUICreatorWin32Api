@@ -7,11 +7,8 @@
 
 // app.h global tanımları + Status() utils.cpp içinde tanımlı (burada tekrar tanımlanmaz)
 
-// surface.cpp bağlanmadan: factory'nin çağırdığı iki fonksiyonun stub'u
-namespace surface {
-void SubclassForDesign(HWND h) { (void)h; }
-void PositionOne(HWND surf, Ctrl* c) { (void)surf; (void)c; }
-}
+// surface.cpp tam olarak bağlanır (SubclassForDesign/PositionOne/OnModelDelete gerçek)
+#include "surface.h"
 
 // Kullanıcının rapor ettiği BOZUK dosya (C2040 + boş WM_COMMAND switch)
 static const wchar_t* BROKEN_CPP =

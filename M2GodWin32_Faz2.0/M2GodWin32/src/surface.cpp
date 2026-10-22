@@ -20,8 +20,114 @@ static RECT     s_startRect;        // kontrol başlangıç rect (parent göreli
 static bool     s_started = false;  // eşik geçildi mi (undo için)
 static bool     s_gridSnap = true;
 static POINT    s_lastCursor = { 0, 0 };  // son imleç (yüzey client) — bırakma noktası
+static HWND     s_surf = nullptr;         // yüzey (drag katmanı için)
+static HWND     s_dragLayer = nullptr;    // SÜRÜKLEME GÖRSELİ KATMANI (tüm çocukların üstünde)
+
+// --- sürükleme görsel katmanı -------------------------------------------------
+// Gerçek HWND'ler sürükleme sırasında HİZLETİLMEZ (hayalet piksel/kendini
+// kopyalamış gibi görünen bug'ların kök nedeni); yerine katman penceresi
+// kontrollerin ÜSTÜNDE hayalet + bırakma hedefi çizer.
+// Katman SetWindowRgn ile şekillendirilir: yalnız hayalet + hedef çerçevesi
+// görünür, geri kalanı tamamen şeffaf ve tıklanabilir (Wine/Windows uyumlu).
+static RECT CtrlRectOnSurface(const Ctrl* c, HWND surf);
+static Ctrl* HitAt(HWND surf, int sx, int sy, Ctrl* exclude);
+static Ctrl* DropParentAt(HWND surf, int sx, int sy, Ctrl* dragged);
+static void ContainerChildArea(Ctrl* cont, int& x0, int& y0, int& x1, int& y1);
+static RECT ClientAreaRect(HWND surf);
+static LRESULT CALLBACK DragLayerProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    switch (m) {
+    case WM_NCHITTEST: return HTTRANSPARENT;   // fare alttaki yüzeye/ kontrollere gitsin
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+        Ctrl* d = s_drag;
+        if (d && s_dragMode == 1 && s_started) {
+            // hayalet kontrol (bölge zaten yalnız bu alanları kapsıyor)
+            RECT g = CtrlRectOnSurface(d, s_surf);
+            HBRUSH fb = CreateSolidBrush(RGB(204, 232, 255));
+            FillRect(dc, &g, fb); DeleteObject(fb);
+            HPEN pen = CreatePen(PS_SOLID, 1, RGB(0, 120, 215));
+            HPEN op = (HPEN)SelectObject(dc, pen);
+            HBRUSH ob = (HBRUSH)SelectObject(dc, GetStockObject(NULL_BRUSH));
+            Rectangle(dc, g.left, g.top, g.right, g.bottom);
+            // seçim kesikli çerçeve
+            HPEN dpen = CreatePen(PS_DOT, 1, RGB(0, 90, 158));
+            HPEN op2 = (HPEN)SelectObject(dc, dpen);
+            Rectangle(dc, g.left - SEL_MARGIN, g.top - SEL_MARGIN, g.right + SEL_MARGIN, g.bottom + SEL_MARGIN);
+            SelectObject(dc, op2); DeleteObject(dpen);
+            SelectObject(dc, op); SelectObject(dc, ob); DeleteObject(pen);
+            SetBkMode(dc, TRANSPARENT);
+            SelectObject(dc, g_fontUI);
+            SetTextColor(dc, RGB(0, 60, 110));
+            RECT tr = g; tr.left += 6;
+            std::wstring label = d->name + L" (" + d->type + L")";
+            DrawTextW(dc, label.c_str(), -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            // bırakma hedefi çerçevesi (bölge yalnız şeritleri kapsar)
+            Ctrl* tgt = DropParentAt(s_surf, s_lastCursor.x, s_lastCursor.y, d);
+            if (tgt && tgt != d) {
+                int x0, y0, x1, y1; ContainerChildArea(tgt, x0, y0, x1, y1);
+                POINT ap = g_model.AbsPos(tgt);
+                RECT cr = ClientAreaRect(s_surf);
+                RECT t = { cr.left + ap.x + x0, cr.top + ap.y + y0, cr.left + ap.x + x1, cr.top + ap.y + y1 };
+                HPEN tpen = CreatePen(PS_DOT, 1, RGB(0, 120, 215));
+                HPEN otp = (HPEN)SelectObject(dc, tpen);
+                HBRUSH obt = (HBRUSH)SelectObject(dc, GetStockObject(NULL_BRUSH));
+                Rectangle(dc, t.left, t.top, t.right, t.bottom);
+                SelectObject(dc, otp); SelectObject(dc, obt); DeleteObject(tpen);
+            }
+        }
+        EndPaint(h, &ps);
+        return 0;
+    }
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+
+// katmanın görünür bölgesi = hayalet (+kenar) + hedef çerçeve şeritleri
+static void DragLayerUpdateRegion(HWND surf) {
+    if (!s_dragLayer || !IsWindow(s_dragLayer)) return;
+    if (!(s_drag && s_dragMode == 1 && s_started)) { SetWindowRgn(s_dragLayer, nullptr, TRUE); return; }
+    RECT g = CtrlRectOnSurface(s_drag, surf);
+    InflateRect(&g, SEL_MARGIN + 1, SEL_MARGIN + 1);
+    HRGN rgn = CreateRectRgnIndirect(&g);
+    Ctrl* tgt = DropParentAt(surf, s_lastCursor.x, s_lastCursor.y, s_drag);
+    if (tgt && tgt != s_drag) {
+        int x0, y0, x1, y1; ContainerChildArea(tgt, x0, y0, x1, y1);
+        POINT ap = g_model.AbsPos(tgt);
+        RECT cr = ClientAreaRect(surf);
+        RECT t = { cr.left + ap.x + x0, cr.top + ap.y + y0, cr.left + ap.x + x1, cr.top + ap.y + y1 };
+        HRGN ss[4] = {
+            CreateRectRgn(t.left - 1, t.top - 1, t.right + 1, t.top + 1),
+            CreateRectRgn(t.left - 1, t.bottom - 1, t.right + 1, t.bottom + 1),
+            CreateRectRgn(t.left - 1, t.top, t.left + 1, t.bottom),
+            CreateRectRgn(t.right - 1, t.top, t.right + 1, t.bottom)
+        };
+        for (auto s : ss) { CombineRgn(rgn, rgn, s, RGN_OR); DeleteObject(s); }
+    }
+    SetWindowRgn(s_dragLayer, rgn, TRUE);
+}
+
+static void DragLayerShow(HWND surf) {
+    if (!s_dragLayer) return;
+    RECT rc; GetClientRect(surf, &rc);
+    MoveWindow(s_dragLayer, 0, 0, rc.right, rc.bottom, FALSE);
+    SetWindowPos(s_dragLayer, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    DragLayerUpdateRegion(surf);
+    ShowWindow(s_dragLayer, SW_SHOWNA);
+    InvalidateRect(s_dragLayer, nullptr, TRUE);
+}
+static void DragLayerHide() {
+    if (s_dragLayer && IsWindow(s_dragLayer)) ShowWindow(s_dragLayer, SW_HIDE);
+}
+static void DragLayerInvalidate() {
+    if (s_dragLayer && IsWindow(s_dragLayer)) {
+        DragLayerUpdateRegion(s_surf);
+        InvalidateRect(s_dragLayer, nullptr, TRUE);
+    }
+}
 
 // --- koordinat yardımcıları ----------------------------------------------------
+static void RepaintAll(HWND surf);   // ileri bildirim (DoScroll da kullanır)
 static RECT ClientAreaRect(HWND surf) {
     RECT f = FormRect(surf);
     RECT c = { f.left, f.top + TITLE_H, f.right, f.bottom - TRAY_H };
@@ -71,6 +177,31 @@ RECT FormRect(HWND surf) {
     return f;
 }
 
+// VS kuralı: konteyner üstüne bırakılırsa içine; düz kontrol üstüne bırakılırsa
+// o kontrolün bulunduğu katmana girer.
+// TabControl: yalnızca SAYFA ALANI (sekme şeridi değil) içine alır — şeride
+// bırakılanlar dış katmana gider (yanlışlıkla yutma sorununu önler).
+static void ContainerChildArea(Ctrl* cont, int& x0, int& y0, int& x1, int& y1);
+static Ctrl* DropParentAt(HWND surf, int sx, int sy, Ctrl* dragged) {
+    Ctrl* t = HitAt(surf, sx, sy, dragged);
+    Ctrl* p = nullptr;
+    if (t) {
+        if (IsContainerType(t->type)) {
+            if (_wcsicmp(t->type.c_str(), L"TabControl") == 0) {
+                int x0, y0, x1, y1; ContainerChildArea(t, x0, y0, x1, y1);
+                int fx, fy; ScreenToForm(surf, sx, sy, &fx, &fy);
+                POINT ap = g_model.AbsPos(t);
+                int lx = fx - ap.x, ly = fy - ap.y;
+                if (lx < x0 || ly < y0 || lx > x1 || ly > y1) p = t->parent;
+                else p = t;
+            } else p = t;
+        }
+        else p = t->parent;
+    }
+    if (p && (p == dragged || g_model.IsAncestorOf(dragged, p))) p = dragged->parent;
+    return p;
+}
+
 // --- hit-test (parent-child duyarlı) ---------------------------------------------
 // lx,ly: parent'in sol üstüne göre (parent=null → form koordinatı)
 static Ctrl* HitInEx(Ctrl* parent, int lx, int ly, Ctrl* exclude) {
@@ -91,19 +222,6 @@ static Ctrl* HitAt(HWND surf, int sx, int sy, Ctrl* exclude = nullptr) {
     return HitInEx(nullptr, fx, fy, exclude);
 }
 static Ctrl* HitControl(HWND surf, int sx, int sy) { return HitAt(surf, sx, sy); }
-
-// VS kuralı: konteyner üstüne bırakılırsa içine; düz kontrol üstüne bırakılırsa
-// o kontrolün bulunduğu katmana girer
-static Ctrl* DropParentAt(HWND surf, int sx, int sy, Ctrl* dragged) {
-    Ctrl* t = HitAt(surf, sx, sy, dragged);
-    Ctrl* p = nullptr;
-    if (t) {
-        if (IsContainerType(t->type)) p = t;
-        else p = t->parent;
-    }
-    if (p && (p == dragged || g_model.IsAncestorOf(dragged, p))) p = dragged->parent;
-    return p;
-}
 
 // konteynerin "çocuk alanı": GroupBox başlığı, TabControl sekme şeridi hariç
 static void ContainerChildArea(Ctrl* cont, int& x0, int& y0, int& x1, int& y1) {
@@ -153,7 +271,7 @@ static void DoScroll(HWND surf, int dx, int dy) {
     if (odx != s_scrollX || ody != s_scrollY) {
         ScrollWindow(surf, odx - s_scrollX, ody - s_scrollY, nullptr, nullptr);
         UpdateScroll(surf);
-        InvalidateRect(surf, nullptr, FALSE);
+        RepaintAll(surf);   // kaydırmada da çocuklar dahil tam temizlik (hayalet olmasın)
     }
 }
 
@@ -180,6 +298,7 @@ static void DrawTitleBar(HDC dc, const RECT& f) {
 }
 
 static void DrawGrid(HDC dc, const RECT& client) {
+    if (!g_gridVisible) return;
     int gx = GRID_SIZE * 2;
     for (int x = gx - (s_scrollX % gx); x < client.right; x += gx) {
         if (x < client.left) continue;
@@ -303,7 +422,9 @@ static void Paint(HWND surf) {
     DrawGrid(mem, client);
     DrawTitleBar(mem, f);
     DrawTray(mem, surf);
-    DrawSelection(surf, mem);
+    // overlay sürükleme sırasında seçim çerçevesini katman çizer (çift çizgi olmasın)
+    if (!(s_drag && s_dragMode == 1 && s_started))
+        DrawSelection(surf, mem);
     BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
     SelectObject(mem, ob);
     DeleteObject(bmp); DeleteDC(mem);
@@ -353,6 +474,17 @@ static void RepaintAll(HWND surf) {
     RedrawWindow(surf, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
 }
 
+// aktif sürükleme kontrolünü güvenle iptal et (silme/undo sırasında çağrılır)
+void OnModelDelete(Ctrl* c) {
+    if (!s_drag) return;
+    if (s_drag == c || g_model.IsAncestorOf(c, s_drag) || g_model.IsAncestorOf(s_drag, c)) {
+        DragLayerHide();
+        // gerçek HWND gizliydi (overlay sürükleme) — silinmeden önce göster
+        if (c->hwnd && IsWindow(c->hwnd)) ShowWindow(c->hwnd, SW_SHOWNA);
+        s_drag = nullptr; s_dragMode = 0; s_handle = -1;
+    }
+}
+
 // araç kutusundan yeni kontrol yerleştir (bırakma VE tıkla-yerleştir ortak yolu)
 void PlaceNew(HWND surf, const std::wstring& type, int sx, int sy) {
     const ElementDef* def = g_catalog.Find(type);
@@ -387,6 +519,10 @@ void PlaceNew(HWND surf, const std::wstring& type, int sx, int sy) {
 }
 
 // sürükleme/boyutlandırmayı uygula — koordinatlar PARENT görelisi
+// TAŞIMA (mode 1): gerçek HWND HİZLETİLMEZ (gizli), hayalet katmanda çizilir.
+//   → konteyner kenarına çarpma yok, konteynerden akıcı çıkış var,
+//   → grup kutusu içinde hayalet/kendini kopyalamış görüntü olmaz.
+// BOYUTLANDIRMA (mode 2): HWND canlı boyutlanır + her hamlede tam temizlik.
 static void ApplyDrag(HWND surf, int sx, int sy) {
     if (!s_drag) return;
     s_lastCursor = { sx, sy };
@@ -394,44 +530,44 @@ static void ApplyDrag(HWND surf, int sx, int sy) {
     if (s_dragMode == 1) {
         int nx = s_startRect.left + dx, ny = s_startRect.top + dy;
         if (s_gridSnap) { nx = ((nx + GRID_SIZE / 2) / GRID_SIZE) * GRID_SIZE; ny = ((ny + GRID_SIZE / 2) / GRID_SIZE) * GRID_SIZE; }
-        if (s_drag->parent) {
-            int maxW = s_drag->parent->w - s_drag->w, maxH = s_drag->parent->h - s_drag->h;
-            nx = max(0, min(nx, max(0, maxW)));
-            ny = max(0, min(ny, max(0, maxH)));
-        } else {
-            nx = max(0, min(nx, g_model.formW - 8));
-            ny = max(0, min(ny, g_model.formH - 8));
-        }
+        // KONTAYNER CLAMP'İ YOK — kontrol konteynerin dışına serbestçe taşınabilir;
+        // hedef katman bırakma anında imleç konumundan belirlenir (VS davranışı)
         s_drag->x = nx; s_drag->y = ny;
         wchar_t b[64]; swprintf(b, 64, L"%d, %d", nx, ny);
         s_drag->props[L"Location"] = b;
-    } else {
-        int nw = s_startRect.right - s_startRect.left, nh = s_startRect.bottom - s_startRect.top;
-        int x0 = s_startRect.left, y0 = s_startRect.top;
-        switch (s_handle) {
-        case 0: x0 += dx; y0 += dy; nw -= dx; nh -= dy; break;
-        case 1: y0 += dy; nh -= dy; break;
-        case 2: x0 += dx; y0 += dy; nw -= dx; nh -= dy; break;
-        case 3: nw += dx; break;
-        case 4: nw += dx; nh += dy; break;
-        case 5: nh += dy; break;
-        case 6: x0 += dx; nw -= dx; nh += dy; break;
-        case 7: x0 += dx; nw -= dx; break;
-        }
-        if (s_gridSnap) { nw = max(GRID_SIZE, ((nw + GRID_SIZE / 2) / GRID_SIZE) * GRID_SIZE); nh = max(GRID_SIZE, ((nh + GRID_SIZE / 2) / GRID_SIZE) * GRID_SIZE); }
-        nw = max(8, nw); nh = max(8, nh);
-        s_drag->x = x0; s_drag->y = y0; s_drag->w = nw; s_drag->h = nh;
-        wchar_t b1[64], b2[64];
-        swprintf(b1, 64, L"%d, %d", x0, y0); swprintf(b2, 64, L"%d, %d", nw, nh);
-        s_drag->props[L"Location"] = b1; s_drag->props[L"Size"] = b2;
+        DragLayerInvalidate();          // hayalet + hedef vurgusu yeniden çiz
+        PostMessageW(g_hMain, MWM_PROPS_APPLIED, 0, 0);
+        return;
     }
+    // --- boyutlandırma (mode 2) ---
+    int nw = s_startRect.right - s_startRect.left, nh = s_startRect.bottom - s_startRect.top;
+    int x0 = s_startRect.left, y0 = s_startRect.top;
+    switch (s_handle) {
+    case 0: x0 += dx; y0 += dy; nw -= dx; nh -= dy; break;
+    case 1: y0 += dy; nh -= dy; break;
+    case 2: x0 += dx; y0 += dy; nw -= dx; nh -= dy; break;
+    case 3: nw += dx; break;
+    case 4: nw += dx; nh += dy; break;
+    case 5: nh += dy; break;
+    case 6: x0 += dx; nw -= dx; nh += dy; break;
+    case 7: x0 += dx; nw -= dx; break;
+    }
+    if (s_gridSnap) { nw = max(GRID_SIZE, ((nw + GRID_SIZE / 2) / GRID_SIZE) * GRID_SIZE); nh = max(GRID_SIZE, ((nh + GRID_SIZE / 2) / GRID_SIZE) * GRID_SIZE); }
+    nw = max(8, nw); nh = max(8, nh);
+    s_drag->x = x0; s_drag->y = y0; s_drag->w = nw; s_drag->h = nh;
+    wchar_t b1[64], b2[64];
+    swprintf(b1, 64, L"%d, %d", x0, y0); swprintf(b2, 64, L"%d, %d", nw, nh);
+    s_drag->props[L"Location"] = b1; s_drag->props[L"Size"] = b2;
     PositionOne(surf, s_drag);
-    InvalidateRect(surf, nullptr, FALSE);
+    RepaintAll(surf);   // canlı boyutlandırmada hayalet pikselleri anında temizle
     PostMessageW(g_hMain, MWM_PROPS_APPLIED, 0, 0);   // hafif güncelleme (flicker yok)
 }
 
 // sürükleme bitince: imlecin üstündeki konteynere al (VS davranışı)
 static void FinishDragReparent(HWND surf, Ctrl* dragged) {
+    // gerçek kontrolü geri göster (overlay sürükleme sırasında gizliydi)
+    if (dragged->hwnd && IsWindow(dragged->hwnd)) ShowWindow(dragged->hwnd, SW_SHOWNA);
+    DragLayerHide();
     if (!dragged) { PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0); return; }
     Ctrl* newParent = DropParentAt(surf, s_lastCursor.x, s_lastCursor.y, dragged);
     if (newParent != dragged->parent) {
@@ -442,16 +578,21 @@ static void FinishDragReparent(HWND surf, Ctrl* dragged) {
         if (newParent) {
             POINT ap = g_model.AbsPos(newParent);
             px -= ap.x; py -= ap.y;
+            ClampIntoContainer(newParent, px, py, dragged->w, dragged->h);
+        } else {
+            // forma bırakıldı: form sınırları içine kıstır
+            px = max(0, min(px, max(0, g_model.formW - dragged->w)));
+            py = max(0, min(py, max(0, g_model.formH - dragged->h)));
         }
-        if (newParent) ClampIntoContainer(newParent, px, py, dragged->w, dragged->h);
         g_model.Reparent(dragged, newParent, px, py);
-        PositionOne(surf, dragged);
-        InvalidateRect(surf, nullptr, TRUE);
-        RedrawWindow(surf, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
         NotifySelChanged();   // props panelini tazele (parent-görelisi değerler)
         std::wstring where = newParent ? (newParent->name + L" içine alındı") : L"forma alındı";
         Status(dragged->name + L" " + where);
     }
+    // HER DURUMDA: HWND'yi model konumuna getir (overlay sürüklemede HWND
+    // hareket etmediği için aynı-katman bırakmalarda da zorunlu)
+    PositionOne(surf, dragged);
+    RepaintAll(surf);
     PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0);
 }
 
@@ -577,7 +718,14 @@ LRESULT CALLBACK SurfaceProc(HWND surf, UINT msg, WPARAM wp, LPARAM lp) {
         if (s_drag && (wp & MK_LBUTTON)) {
             if (!s_started) {
                 int ddx = abs(pt.x - s_start.x), ddy = abs(pt.y - s_start.y);
-                if (ddx > 2 || ddy > 2) s_started = true;
+                if (ddx > 2 || ddy > 2) {
+                    s_started = true;
+                    // OVERLAY SÜRÜKLEME başlıyor: gerçek kontrol gizlenir, hayalet katman gösterilir
+                    if (s_dragMode == 1 && s_drag->hwnd && IsWindow(s_drag->hwnd) && !s_drag->nonVisual)
+                        ShowWindow(s_drag->hwnd, SW_HIDE);
+                    if (s_dragMode == 1 && !s_drag->nonVisual) DragLayerShow(surf);
+                    InvalidateRect(surf, nullptr, FALSE);
+                }
             }
             if (s_started) ApplyDrag(surf, pt.x, pt.y);
             return 0;
@@ -597,10 +745,10 @@ LRESULT CALLBACK SurfaceProc(HWND surf, UINT msg, WPARAM wp, LPARAM lp) {
         // durum çubuğu
         int fx, fy; ScreenToForm(surf, pt.x, pt.y, &fx, &fy);
         wchar_t b[128];
-        if (!armed.empty()) swprintf(b, 128, L"%s yerleştirmek için tıkla — ESC iptal", armed.c_str());
+        if (!armed.empty()) swprintf(b, 128, L"%ls yerleştirmek için tıkla — ESC iptal", armed.c_str());
         else if (g_model.selected && !g_model.formSelected) {
             Ctrl* c = g_model.selected;
-            swprintf(b, 128, L"Konum: %d, %d   Boyut: %d × %d   [%s]", fx, fy, c->w, c->h, c->name.c_str());
+            swprintf(b, 128, L"Konum: %d, %d   Boyut: %d × %d   [%ls]", fx, fy, c->w, c->h, c->name.c_str());
         } else swprintf(b, 128, L"Konum: %d, %d", fx, fy);
         Status(b);
         return 0;
@@ -609,21 +757,32 @@ LRESULT CALLBACK SurfaceProc(HWND surf, UINT msg, WPARAM wp, LPARAM lp) {
         if (s_drag) {
             Ctrl* dragged = s_drag;          // reparent için yakala
             int mode = s_dragMode;
+            bool started = s_started;
             ReleaseCapture();
-            s_drag = nullptr; s_dragMode = 0;
+            s_drag = nullptr; s_dragMode = 0; s_started = false;
             if (mode == 2) {
-                InvalidateRect(surf, nullptr, FALSE);
+                RepaintAll(surf);
                 PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0);
             } else {
-                // hayalet pikselleri tamamen temizle (tüm çocuklarla)
-                RedrawWindow(surf, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
-                FinishDragReparent(surf, dragged);
+                // hayalet katmanı kapat, gerçek kontrolü geri getir, tam temizlik
+                DragLayerHide();
+                if (started && dragged->hwnd && IsWindow(dragged->hwnd) && !dragged->nonVisual)
+                    ShowWindow(dragged->hwnd, SW_SHOWNA);
+                RepaintAll(surf);
+                if (started) FinishDragReparent(surf, dragged);
             }
         }
         return 0;
     }
     case WM_CAPTURECHANGED: {
-        s_drag = nullptr; s_dragMode = 0;
+        // sürükleme dışarıdan iptal edildiyse (silme vb.) görünümü toparla
+        if (s_drag) {
+            Ctrl* d = s_drag;
+            DragLayerHide();
+            if (d->hwnd && IsWindow(d->hwnd) && !d->nonVisual) ShowWindow(d->hwnd, SW_SHOWNA);
+            s_drag = nullptr; s_dragMode = 0; s_started = false;
+            RepaintAll(surf);
+        }
         return 0;
     }
     case WM_LBUTTONDBLCLK: {
@@ -657,6 +816,20 @@ LRESULT CALLBACK SurfaceProc(HWND surf, UINT msg, WPARAM wp, LPARAM lp) {
         bool ctrl = GetKeyState(VK_CONTROL) & 0x8000;
         int step = s_gridSnap ? GRID_SIZE : 1;
         if (wp == VK_ESCAPE) {
+            // 1) aktif sürüklemeyi iptal et: başlangıç konumuna dön
+            if (s_drag) {
+                Ctrl* d = s_drag;
+                DragLayerHide();
+                s_drag = nullptr; s_dragMode = 0; s_started = false;
+                d->x = s_startRect.left; d->y = s_startRect.top;
+                wchar_t b[64]; swprintf(b, 64, L"%d, %d", d->x, d->y);
+                d->props[L"Location"] = b;
+                if (d->hwnd && IsWindow(d->hwnd)) { PositionOne(surf, d); ShowWindow(d->hwnd, SW_SHOWNA); }
+                RepaintAll(surf);
+                NotifySelChanged();
+                Status(L"Taşıma iptal edildi");
+                return 0;
+            }
             if (!toolbox::ArmedType().empty()) { toolbox::Disarm(); Status(L"Yerleştirme iptal edildi"); return 0; }
             g_model.selected = nullptr; g_model.formSelected = true;
             NotifySelChanged(); InvalidateRect(surf, nullptr, FALSE); return 0;
@@ -690,7 +863,7 @@ LRESULT CALLBACK SurfaceProc(HWND surf, UINT msg, WPARAM wp, LPARAM lp) {
         wchar_t b1[64], b2[64];
         swprintf(b1, 64, L"%d, %d", c->x, c->y); swprintf(b2, 64, L"%d, %d", c->w, c->h);
         c->props[L"Location"] = b1; c->props[L"Size"] = b2;
-        InvalidateRect(surf, nullptr, FALSE);
+        RepaintAll(surf);   // konteyner içinde ok tuşuyla taşımada da hayalet kalmasın
         PostMessageW(g_hMain, MWM_PROPS_APPLIED, 0, 0);
         return 0;
     }
@@ -736,8 +909,24 @@ HWND Create(HWND parent) {
         RegisterClassW(&wc);
         reg = true;
     }
-    HWND h = CreateWindowExW(0, L"M2GOD_SURFACE", L"", WS_CHILD | WS_VISIBLE | WS_HSCROLL | WS_VSCROLL | WS_CLIPCHILDREN,
+    // NOT: WS_CLIPCHILDREN BİLİNÇLİ YOK — grup kutusu gibi şeffaf kontrollerin
+    // iç yüzeyi parent boyasıyla temizlensin (hayalet piksellerin kök nedeni)
+    HWND h = CreateWindowExW(0, L"M2GOD_SURFACE", L"", WS_CHILD | WS_VISIBLE | WS_HSCROLL | WS_VSCROLL,
                              0, 0, 0, 0, parent, (HMENU)IDC_SURFACE, g_hInst, nullptr);
+    s_surf = h;
+    // sürükleme görsel katmanı (bölgeli child — kontrollerin üstünde, şekli dışında şeffaf)
+    static bool regL = false;
+    if (!regL) {
+        WNDCLASSW wc2 = { 0 };
+        wc2.lpfnWndProc = DragLayerProc;
+        wc2.hInstance = g_hInst;
+        wc2.hbrBackground = nullptr;
+        wc2.lpszClassName = L"M2GOD_DRAGLAYER";
+        RegisterClassW(&wc2);
+        regL = true;
+    }
+    s_dragLayer = CreateWindowExW(WS_EX_TRANSPARENT, L"M2GOD_DRAGLAYER", L"",
+                                  WS_CHILD, 0, 0, 0, 0, h, nullptr, g_hInst, nullptr);
     return h;
 }
 
@@ -780,7 +969,7 @@ void RecreateAll(HWND surf) {
     // z-sırası kurallı: önce parent'lar; aynı parent içinde oluşturma sırası (son = üstte)
     for (auto* c : g_model.ChildrenOf(nullptr)) CreateBranch(surf, c);
     LayoutAll(surf);
-    InvalidateRect(surf, nullptr, TRUE);
+    RepaintAll(surf);
 }
 
 void RefreshSelection(HWND surf) {

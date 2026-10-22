@@ -65,7 +65,7 @@ static std::wstring EmitCreateCall(const Ctrl* c) {
 
 std::wstring GenerateForm1Cpp() {
     std::wostringstream o;
-    o << L"// Form1.cpp — M2GodWin32 UI Designer (Faz 2.2) tarafından üretilmiştir.\n";
+    o << L"// Form1.cpp — M2GodWin32 UI Designer (Faz 2.3) tarafından üretilmiştir.\n";
     o << L"// Marker blokları (//== M2GOD:... ) tasarımcı senkronizasyonu içindir; dışını düzenleyebilirsiniz.\n\n";
     o << L"#include \"Form1.h\"\n";
     o << L"#include <commctrl.h>\n\n";
@@ -215,7 +215,7 @@ std::wstring GenerateForm1Cpp() {
 
 std::wstring GenerateForm1H() {
     std::wostringstream o;
-    o << L"// Form1.h — M2GodWin32 UI Designer (Faz 2.2) tarafından üretilmiştir.\n";
+    o << L"// Form1.h — M2GodWin32 UI Designer (Faz 2.3) tarafından üretilmiştir.\n";
     o << L"#pragma once\n";
     o << L"#include <windows.h>\n\n";
     o << L"namespace M2GodForm {\n\n";

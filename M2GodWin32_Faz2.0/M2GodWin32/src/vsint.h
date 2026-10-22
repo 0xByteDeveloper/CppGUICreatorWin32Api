@@ -30,6 +30,9 @@ std::vector<VSInstance> Enumerate();
 // Çözüm dosyasındaki .vcxproj yolları
 std::vector<std::wstring> EnumerateProjectsOfSolution(const std::wstring& slnPath);
 
+// Klasörde (derinlik sınırlı, bin/obj/.vs atlanarak) .vcxproj tarar
+std::vector<std::wstring> FindVcxprojsUnder(const std::wstring& dir, int depth);
+
 // Çözüm adından diskte .sln arar (source\repos vb. bilinen kökler)
 std::wstring FindSlnOnDisk(const std::wstring& solutionName);
 

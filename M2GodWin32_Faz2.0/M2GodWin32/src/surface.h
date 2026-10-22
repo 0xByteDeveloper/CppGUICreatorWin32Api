@@ -34,4 +34,8 @@ void RefreshSelection(HWND surf);
 // sx,sy: yüzey client koordinatı; hedef konteyner varsa otomatik içine alınır.
 void PlaceNew(HWND surf, const std::wstring& type, int sx, int sy);
 
+// Modelden bir kontrol silinirken çağrılır: aktif sürükleme bu kontrolün
+// (veya atasının) üzerindeyse sürükleme durumunu güvenle kapatır.
+void OnModelDelete(Ctrl* c);
+
 } // namespace surface

@@ -12,6 +12,8 @@ namespace toolbox {
 static HWND s_tree = nullptr;
 static HWND s_caption = nullptr;
 static HWND s_search = nullptr;
+static HWND s_panelH = nullptr;                 // panel (armed göstergesi için)
+static HWND s_panelHwnd() { return s_panelH; }
 static POINT s_dragPt;
 static bool  s_dragging = false;
 static std::wstring s_dragType;
@@ -24,13 +26,19 @@ std::wstring ArmedType() { return s_armedType; }
 void Disarm() {
     if (!s_armedType.empty()) {
         s_armedType.clear();
-        // ağaç seçimini temizle (odak geri geldiğinde imleç normale döner)
+        // ağaç vurgusunu temizle (VS: yerleştirme bitince araç vurgusu kalkar)
+        if (s_tree) {
+            PostMessageW(s_tree, TVM_SELECTITEM, TVGN_CARET, 0);
+            InvalidateRect(s_tree, nullptr, FALSE);
+        }
+        InvalidateRect(s_panelHwnd(), nullptr, FALSE);
         Status(L"Hazır");
     }
 }
 void Arm(const std::wstring& type) {
     s_armedType = type;
     Status(type + L" — formda bir yere tıklayın (ESC = iptal)");
+    InvalidateRect(s_panelHwnd(), nullptr, FALSE);
 }
 
 static LRESULT CALLBACK PanelProc(HWND h, UINT m, WPARAM w, LPARAM l) {
@@ -59,6 +67,8 @@ static LRESULT CALLBACK PanelProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 const std::wstring& type = itemTypes[it];
                 if (nm->code == NM_CLICK) {
                     Arm(type);   // imleç formda artık artı (cross) olur
+                    // araç vurgusu: kategori DEĞİL, tıklanan araç seçilsin (VS gibi)
+                    TreeView_SelectItem(s_tree, it);
                 } else {
                     // çift tık: geçerli konuma ekle (basamaklı)
                     Disarm();
@@ -67,7 +77,21 @@ static LRESULT CALLBACK PanelProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                     int cx = cr.right / 2 - 50, cy = cr.bottom / 2 - 15;
                     surface::PlaceNew(surf, type, cx, cy);
                 }
-                return 1;   // seçimi normal bırak, dal değişmesin
+                return 1;
+            }
+            return 1;   // kategori tıkları varsayılan işlemi yapmasın (yanlış vurgu engeli)
+        }
+        if (nm->code == TVN_SELCHANGED) {
+            // YANLIŞ VURGU DÜZELTMESİ: seçim bir ARAÇ değilse (kategori vs.)
+            // vurguyu temizle; araçsa tıkla-yerleştir modunu aç
+            NMTREEVIEW* nt = (NMTREEVIEW*)l;
+            HTREEITEM it = nt->itemNew.hItem;
+            if (!it || !itemTypes.count(it)) {
+                if (TreeView_GetSelection(s_tree))
+                    PostMessageW(s_tree, TVM_SELECTITEM, TVGN_CARET, 0);
+            } else if (s_armedType.empty() || s_armedType != itemTypes[it]) {
+                // klavye/varsayılan yolla seçim araca geldi — arm et
+                Arm(itemTypes[it]);
             }
             return 0;
         }
@@ -151,6 +175,7 @@ HWND Create(HWND parent) {
     }
     HWND h = CreateWindowExW(0, L"M2GOD_TOOLBOX", L"", WS_CHILD | WS_VISIBLE,
                              0, 0, TOOLBOX_W, 200, parent, (HMENU)1500, g_hInst, nullptr);
+    s_panelH = h;
     s_caption = CreateWindowExW(0, L"STATIC", L"Araç Kutusu", WS_CHILD | WS_VISIBLE,
                                 0, 0, TOOLBOX_W, 26, h, nullptr, g_hInst, nullptr);
     s_search = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
@@ -207,7 +232,7 @@ void Refresh(HWND tb) {
         if (itemTypes.empty()) {
             ti.hParent = nullptr;
             wchar_t msg[160];
-            swprintf(msg, 160, L"\"%s\" için sonuç yok", s_filter.c_str());
+            swprintf(msg, 160, L"\"%ls\" için sonuç yok", s_filter.c_str());
             ti.item.pszText = msg;
             TreeView_InsertItem(s_tree, &ti);
         }

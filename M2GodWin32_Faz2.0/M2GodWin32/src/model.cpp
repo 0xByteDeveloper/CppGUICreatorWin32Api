@@ -2,6 +2,7 @@
 #include "model.h"
 #include "app.h"
 #include "json.h"
+#include "surface.h"
 
 Model g_model;
 
@@ -112,6 +113,13 @@ void Model::Delete(Ctrl* c) {
     // alt kontrolleri de sil (derinlemesine)
     for (auto* k : ChildrenOf(c)) Delete(k);
     if (selected == c || IsAncestorOf(c, selected)) { selected = nullptr; formSelected = true; }
+    // HAYALET DÜZELTMESİ: gerçek HWND YOK EDİLMEDEN modelden çıkarılmaz —
+    // (eski kodda HWND kalıyor, silinen kontrol ekranda duruyordu)
+    if (c->hwnd) {
+        surface::OnModelDelete(c);          // aktif sürükleme durumunu güvenle kapat
+        if (IsWindow(c->hwnd)) DestroyWindow(c->hwnd);
+        c->hwnd = nullptr;
+    }
     for (size_t i = 0; i < ctrls.size(); i++)
         if (ctrls[i] == c) { ctrls.erase(ctrls.begin() + i); break; }
     delete c;
@@ -191,7 +199,15 @@ void Model::SendToBack(Ctrl* c) {
     if (c->hwnd) SetWindowPos(c->hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 void Model::ClearAll() {
-    for (auto* c : ctrls) delete c;
+    // HWND'leri önce yok et (yoksa eski "Yeni Tasarım"da tüm kontroller ekranda kalırdı)
+    for (auto* c : ctrls) {
+        if (c->hwnd) {
+            surface::OnModelDelete(c);
+            if (IsWindow(c->hwnd)) DestroyWindow(c->hwnd);
+            c->hwnd = nullptr;
+        }
+        delete c;
+    }
     ctrls.clear();
     selected = nullptr;
     formSelected = true;

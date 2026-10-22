@@ -6,6 +6,7 @@
 #include "factory.h"
 #include "surface.h"
 #include <commctrl.h>
+#include <commdlg.h>
 
 namespace props {
 
@@ -51,6 +52,7 @@ static void EndEdit(HWND panel, bool commit);
 static void FillRows();
 static void SyncList();
 static void SubclassEditor(HWND h);   // satır içi edit/combo alt sınıfı (Enter/ESC)
+static void SubclassComboInner(HWND combo);   // CBS_DROPDOWN iç edit'i (Enter/ESC)
 
 // --- değer uygulama -----------------------------------------------------------
 static void ApplyRowValue(Row& r, const std::wstring& val) {
@@ -129,19 +131,38 @@ static void BeginEdit(HWND panel, int row) {
     // GetSubItemRect liste-client koordinatı verir; edit panel'in çocuğu → panele çevir
     // (yoksa kutu satırın çok üstünde, "aşırı yukarda" belirir)
     MapWindowPoints(s_list, panel, (LPPOINT)&rc, 2);
-    if (r.isEvent || _wcsicmp(r.type.c_str(), L"System.String") == 0 || r.type.empty() ||
+    bool isColor = r.type.find(L"Color") != std::wstring::npos;
+    bool isFont  = r.type.find(L"Font") != std::wstring::npos;
+    if (r.isEvent || isColor || isFont ||
+        _wcsicmp(r.type.c_str(), L"System.String") == 0 || r.type.empty() ||
         _wcsicmp(r.type.c_str(), L"System.Int32") == 0 ||
-        r.type.find(L"Point") != std::wstring::npos || r.type.find(L"Size") != std::wstring::npos ||
-        r.type.find(L"Color") != std::wstring::npos || r.type.find(L"Font") != std::wstring::npos) {
-        // color/font için dropdown da izinli — CBS_DROPDOWN
-        bool dropdown = r.type.find(L"Color") != std::wstring::npos || r.type.find(L"Font") != std::wstring::npos || r.isEvent == false && false;
-        if (r.type.find(L"Color") != std::wstring::npos) {
+        r.type.find(L"Point") != std::wstring::npos || r.type.find(L"Size") != std::wstring::npos) {
+        if (isColor) {
+            // RENK: açılır liste + "Özel renk..." (ChooseColor)
             s_combo = CreateWindowExW(0, L"COMBOBOX", r.value.c_str(),
-                WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWN, rc.left, rc.top, rc.right - rc.left, 220,
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWN, rc.left, rc.top, rc.right - rc.left, 240,
                 panel, (HMENU)1150, g_hInst, nullptr);
-            const wchar_t* colors[] = { L"Black", L"White", L"Red", L"Lime", L"Blue", L"Yellow", L"Cyan", L"Magenta", L"Gray", L"Silver", L"Orange", L"Control", L"Window" };
+            const wchar_t* colors[] = { L"Black", L"White", L"Red", L"Lime", L"Blue", L"Yellow", L"Cyan", L"Magenta",
+                                        L"Gray", L"Silver", L"Orange", L"Control", L"Window", L"Özel renk..." };
             for (auto* cn : colors) SendMessageW(s_combo, CB_ADDSTRING, 0, (LPARAM)cn);
             SendMessageW(s_combo, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
+            SubclassEditor(s_combo);
+            SubclassComboInner(s_combo);
+            SetFocus(s_combo);
+            s_editRow = row; s_editCol = 1;
+            return;
+        }
+        if (isFont) {
+            // YAZI TİPİ: açılır liste + "Yazı tipi seç..." (ChooseFont)
+            s_combo = CreateWindowExW(0, L"COMBOBOX", r.value.c_str(),
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWN, rc.left, rc.top, rc.right - rc.left, 240,
+                panel, (HMENU)1150, g_hInst, nullptr);
+            const wchar_t* fonts[] = { L"Segoe UI, 9pt", L"Segoe UI, 10pt", L"Segoe UI, 9pt, style=Bold", L"Tahoma, 8pt",
+                                        L"Arial, 10pt", L"Calibri, 11pt", L"Consolas, 10pt", L"Courier New, 10pt", L"Times New Roman, 10pt", L"Yazı tipi seç..." };
+            for (auto* fn : fonts) SendMessageW(s_combo, CB_ADDSTRING, 0, (LPARAM)fn);
+            SendMessageW(s_combo, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
+            SubclassEditor(s_combo);
+            SubclassComboInner(s_combo);
             SetFocus(s_combo);
             s_editRow = row; s_editCol = 1;
             return;
@@ -193,10 +214,17 @@ static void SubclassEditor(HWND h) {
     WNDPROC old = (WNDPROC)SetWindowLongPtrW(h, GWLP_WNDPROC, (LONG_PTR)EditorSubProc);
     SetWindowLongPtrW(h, GWLP_USERDATA, (LONG_PTR)old);
 }
+// CBS_DROPDOWN kombonun İÇ edit'ini de alt sınıfla — ENTER/ESC içeri düşmesin
+static void SubclassComboInner(HWND combo) {
+    HWND inner = FindWindowExW(combo, nullptr, L"Edit", nullptr);
+    if (inner) SubclassEditor(inner);
+}
 
 static void EndEdit(HWND panel, bool commit) {
     if (s_editRow < 0) return;
     int row = s_editRow;
+    Row rowInfo;
+    if (row < (int)s_rows.size()) rowInfo = s_rows[row];
     std::wstring val;
     if (s_edit) {
         wchar_t buf[1024]; GetWindowTextW(s_edit, buf, 1024);
@@ -204,17 +232,48 @@ static void EndEdit(HWND panel, bool commit) {
     } else if (s_combo) {
         int sel = (int)SendMessageW(s_combo, CB_GETCURSEL, 0, 0);
         wchar_t buf[256] = L"";
-        if (s_edit) {}
         if (sel >= 0) SendMessageW(s_combo, CB_GETLBTEXT, sel, (LPARAM)buf);
         else GetWindowTextW(s_combo, buf, 256);
         val = buf;
     }
     DestroyEditors();
-    if (commit && row < (int)s_rows.size()) {
-        ApplyRowValue(s_rows[row], val);
-        FillRows(); SyncList();
-        if (s_selRow >= (int)s_rows.size()) s_selRow = -1;
+    if (!commit || row >= (int)s_rows.size()) return;
+    // özel düzenleyiciler
+    if (rowInfo.type.find(L"Color") != std::wstring::npos && val == L"Özel renk...") {
+        static COLORREF cust[16] = { 0 };
+        CHOOSECOLORW cc = { sizeof(cc) };
+        cc.hwndOwner = panel;
+        cc.lpCustColors = cust;
+        cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+        COLORREF init = RGB(0, 0, 0);
+        if (ParseColor(rowInfo.value, init)) cc.rgbResult = init;
+        if (ChooseColorW(&cc)) val = ColorToHex(cc.rgbResult);
+        else return;   // vazgeç — değer değişmez
     }
+    if (rowInfo.type.find(L"Font") != std::wstring::npos && val == L"Yazı tipi seç...") {
+        std::wstring fn; int pt; bool bo, it, un;
+        ParseFontValue(rowInfo.value.empty() ? L"Segoe UI, 9pt" : rowInfo.value, fn, pt, bo, it, un);
+        LOGFONTW lf = { 0 };
+        lstrcpynW(lf.lfFaceName, fn.c_str(), LF_FACESIZE);
+        HDC tdc = GetDC(panel);
+        lf.lfHeight = -MulDiv(pt, GetDeviceCaps(tdc, LOGPIXELSY), 72);
+        ReleaseDC(panel, tdc);
+        lf.lfWeight = bo ? FW_BOLD : FW_NORMAL;
+        lf.lfItalic = it; lf.lfUnderline = un;
+        CHOOSEFONTW cf = { sizeof(cf) };
+        cf.hwndOwner = panel;
+        cf.lpLogFont = &lf;
+        cf.Flags = CF_INITTOLOGFONTSTRUCT | CF_SCREENFONTS | CF_EFFECTS;
+        if (ChooseFontW(&cf)) {
+            val = std::wstring(lf.lfFaceName) + L", " + std::to_wstring(-MulDiv(lf.lfHeight, 72, GetDeviceCaps(GetDC(panel), LOGPIXELSY))) + L"pt";
+            if (lf.lfWeight >= FW_BOLD) val += L", style=Bold";
+            if (lf.lfItalic) val += L", style=Italic";
+            if (lf.lfUnderline) val += L", style=Underline";
+        } else return;   // vazgeç
+    }
+    ApplyRowValue(s_rows[row], val);
+    FillRows(); SyncList();
+    if (s_selRow >= (int)s_rows.size()) s_selRow = row < (int)s_rows.size() ? row : -1;
 }
 
 // --- doldurma -------------------------------------------------------------------
@@ -367,6 +426,11 @@ static LRESULT CALLBACK PanelProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         NMHDR* nm = (NMHDR*)l;
         if (nm->idFrom == IDC_PROPS_LIST) {
             if (nm->code == NM_CUSTOMDRAW) return ListCustomDraw((NMLVCUSTOMDRAW*)l);
+            if (nm->code == LVN_BEGINSCROLL) {
+                // liste kaydırılırsa açık düzenleyici eski satırda kalır → kapat ve işle
+                EndEdit(h, true);
+                return 0;
+            }
             if (nm->code == LVN_ITEMCHANGED) {
                 NMLISTVIEW* nl = (NMLISTVIEW*)l;
                 if (nl->uChanged & LVIF_STATE) {
@@ -402,18 +466,26 @@ static LRESULT CALLBACK PanelProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 return 0;
             }
         }
-        if (nm->idFrom == 1150 && nm->code == CBN_SELCHANGE) { EndEdit(h, true); return 0; }
-        if (nm->idFrom == 1150 && nm->code == CBN_KILLFOCUS) { EndEdit(h, true); return 0; }
-        if (nm->idFrom == 1151 && nm->code == EN_KILLFOCUS) { EndEdit(h, true); return 0; }
+        // NOT: CBN_SELCHANGE / CBN_KILLFOCUS / EN_KILLFOCUS WM_COMMAND ile gelir!
+        // (eski kod bunları WM_NOTIFY içinde arıyordu — hiç tetiklenmiyordu:
+        //  dropdown seçimi ve tıklayarak ayrılma işlemi hiç uygulanmıyordu)
         break;
     }
     case WM_COMMAND: {
-        int id = LOWORD(w);
+        int id = LOWORD(w), note = HIWORD(w);
         if (id == IDC_PROPS_TAB || id == IDC_PROPS_TAB + 1) {
             s_mode = (id == IDC_PROPS_TAB) ? 0 : 1;
-            EndEdit(h, false);
+            EndEdit(h, true);   // sekme değişince açık düzenleyiciyi işle (bırakma değil)
             FillRows(); SyncList();
             InvalidateRect(s_caption, nullptr, TRUE);
+            return 0;
+        }
+        if (id == 1150 && (note == CBN_SELCHANGE || note == CBN_KILLFOCUS || note == CBN_SELENDOK)) {
+            EndEdit(h, true);   // dropdown'dan seçim / odak kaybı → değer uygulanır
+            return 0;
+        }
+        if (id == 1151 && note == EN_KILLFOCUS) {
+            EndEdit(h, true);   // metin düzenleyiciden tıklayarak ayrılma → uygula
             return 0;
         }
         break;

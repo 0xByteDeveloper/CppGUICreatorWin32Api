@@ -171,6 +171,7 @@ static HWND MainWndForPid(DWORD pid) {
 }
 
 // Bilinen köklerde çözüm dosyası ara (DTE yoksa)
+// İki geçiş: 1) tam ad eşleşmesi  2) gevşek eşleşme (başlık adını İÇEREN sln)
 std::wstring FindSlnOnDisk(const std::wstring& solutionName) {
     if (solutionName.empty()) return L"";
     std::vector<std::wstring> roots;
@@ -178,11 +179,13 @@ std::wstring FindSlnOnDisk(const std::wstring& solutionName) {
     DWORD n = GetEnvironmentVariableW(L"USERPROFILE", buf, MAX_PATH);
     std::wstring home = (n > 0 && n < MAX_PATH) ? buf : L"C:\\Users\\Public";
     roots.push_back(home + L"\\source\\repos");
+    roots.push_back(home + L"\\source");
     roots.push_back(home + L"\\Documents\\Visual Studio 2019\\Projects");
     roots.push_back(home + L"\\Documents\\Visual Studio 2022\\Projects");
     roots.push_back(home + L"\\Documents\\Visual Studio 2017\\Projects");
     roots.push_back(home + L"\\Desktop");
     roots.push_back(home + L"\\Documents");
+    std::wstring looseBest;
     // derinlik 3: kök/şey/<ad>/*.sln veya kök/<ad>/<ad>/*.sln
     for (auto& root : roots) {
         if (!FileExists(root + L"\\.")) continue;   // klasör yoksa atla
@@ -200,8 +203,11 @@ std::wstring FindSlnOnDisk(const std::wstring& solutionName) {
             if (hf2 != INVALID_HANDLE_VALUE) {
                 std::wstring sln = fd.cFileName;
                 FindClose(hf2);
-                if (_wcsicmp(Lower(sln).substr(0, sln.size() - 4).c_str(), Lower(solutionName).c_str()) == 0)
+                std::wstring base = Lower(sln).substr(0, sln.size() - 4);
+                if (_wcsicmp(base.c_str(), Lower(solutionName).c_str()) == 0)
                     return dir + L"\\" + sln;
+                if (looseBest.empty() && base.find(Lower(solutionName)) != std::wstring::npos)
+                    looseBest = dir + L"\\" + sln;
             } else FindClose(hf2);
             // bir seviye daha derin
             HANDLE hf3 = FindFirstFileW((dir + L"\\*").c_str(), &fd);
@@ -214,8 +220,11 @@ std::wstring FindSlnOnDisk(const std::wstring& solutionName) {
                     if (hf4 != INVALID_HANDLE_VALUE) {
                         std::wstring sln = fd.cFileName;
                         FindClose(hf4);
-                        if (_wcsicmp(Lower(sln).substr(0, sln.size() - 4).c_str(), Lower(solutionName).c_str()) == 0)
+                        std::wstring base = Lower(sln).substr(0, sln.size() - 4);
+                        if (_wcsicmp(base.c_str(), Lower(solutionName).c_str()) == 0)
                             return dir2 + L"\\" + sln;
+                        if (looseBest.empty() && base.find(Lower(solutionName)) != std::wstring::npos)
+                            looseBest = dir2 + L"\\" + sln;
                     } else FindClose(hf4);
                 } while (FindNextFileW(hf3, &fd));
                 FindClose(hf3);
@@ -223,7 +232,41 @@ std::wstring FindSlnOnDisk(const std::wstring& solutionName) {
         } while (FindNextFileW(hf, &fd));
         FindClose(hf);
     }
-    return L"";
+    return looseBest;
+}
+
+// Klasörde (derinlik sınırlı) .vcxproj tara — çözüm ayrıştırması boş dönerse yedek
+// bin/obj/.vs/x64/Debug/Release klasörleri atlanır
+std::vector<std::wstring> FindVcxprojsUnder(const std::wstring& dir, int depth) {
+    std::vector<std::wstring> out;
+    if (depth < 0) return out;
+    WIN32_FIND_DATAW fd;
+    HANDLE hf = FindFirstFileW((dir + L"\\*.vcxproj").c_str(), &fd);
+    if (hf != INVALID_HANDLE_VALUE) {
+        do {
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+                out.push_back(dir + L"\\" + fd.cFileName);
+        } while (FindNextFileW(hf, &fd));
+        FindClose(hf);
+    }
+    if (depth > 0) {
+        static const wchar_t* skip[] = { L"bin", L"obj", L".vs", L"x64", L"Debug", L"Release", L"Win32" };
+        HANDLE hd = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+        if (hd != INVALID_HANDLE_VALUE) {
+            do {
+                std::wstring name = fd.cFileName;
+                if (name == L"." || name == L"..") continue;
+                if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+                bool sk = false;
+                for (auto* s : skip) if (_wcsicmp(name.c_str(), s) == 0) { sk = true; break; }
+                if (sk) continue;
+                auto sub = FindVcxprojsUnder(dir + L"\\" + name, depth - 1);
+                out.insert(out.end(), sub.begin(), sub.end());
+            } while (FindNextFileW(hd, &fd));
+            FindClose(hd);
+        }
+    }
+    return out;
 }
 static bool CollectDteFromROT(std::vector<VSInstance>& out) {
     IRunningObjectTable* rot = nullptr;
@@ -380,6 +423,9 @@ std::vector<VSInstance> Enumerate() {
             w.solutionPath = FindSlnOnDisk(w.solutionName);
         if (!w.solutionPath.empty()) {
             w.projects = EnumerateProjectsOfSolution(w.solutionPath);
+            // yedek: çözüm ayrıştırması boşsa proje klasöründe .vcxproj tara
+            if (w.projects.empty())
+                w.projects = FindVcxprojsUnder(GetFileDir(w.solutionPath), 2);
         }
     }
     // DTE-only örneklerde solutionName boşsa yolu kullan
@@ -430,8 +476,16 @@ std::vector<std::wstring> EnumerateProjectsOfSolution(const std::wstring& slnPat
 
 bool Connect(VSInstance& inst, const std::wstring& projectPath) {
     g_conn = inst;
-    g_conn.projectPath = projectPath;
-    g_conn.projectName = GetFileName(projectPath);
+    // sözleşme: projectPath = PROJE KLASÖRÜ. .vcxproj dosya yolu gelirse klasöre çevir.
+    std::wstring p = projectPath;
+    std::wstring lp = Lower(p);
+    if (lp.size() > 8 && lp.rfind(L".vcxproj") == lp.size() - 8) {
+        g_conn.projectName = GetFileName(p);
+        g_conn.projectPath = GetFileDir(p);
+    } else {
+        g_conn.projectPath = p;
+        g_conn.projectName = GetFileName(p);
+    }
     return true;
 }
 

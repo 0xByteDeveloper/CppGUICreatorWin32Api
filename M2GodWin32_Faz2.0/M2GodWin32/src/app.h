@@ -30,6 +30,7 @@ extern HFONT     g_fontUIBold;
 extern HFONT     g_fontMono;       // Consolas 9pt
 extern std::wstring g_exeDir;      // exe klasörü (trailing \)
 extern bool      g_modelDirty;
+extern bool      g_gridVisible;    // tasarım yüzeyinde ızgara noktaları (Görünüm menüsü)
 
 // Ana pencereye gönderilen özel mesajlar
 #define MWM_SEL_CHANGED     (WM_APP+1)   // wParam: Ctrl* (0 = form seçili), lParam: 0

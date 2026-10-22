@@ -1,12 +1,35 @@
-# M2GodWin32 — Faz 2.2 God Mode MVP
+# M2GodWin32 — Faz 2.3 God Mode MVP
 
 **Visual Studio 2019 C++ CLR Form Designer deneyimini Win32 API ile yaşatan, tam kapsamlı görsel UI tasarım ortamı.**
 
-> Bu proje `CppGUICreatorWin32Api` deposunun **Faz 2.2** geliştirme aşamasıdır.
+> Bu proje `CppGUICreatorWin32Api` deposunun **Faz 2.3** geliştirme aşamasıdır.
 > Katalog kaynağı olarak depodaki **Config_info.json** (.NET Framework WinForms tam eleman kataloğu: 144 eleman, tüm property'ler + event'ler + 203 enum) kullanılır.
 
 
 ---
+
+## Faz 2.3 — Yenilikler (kullanıcı geri bildirimi üzerine)
+
+| Düzeltme / Yeni Özellik | Ayrıntı |
+|---|---|
+| **PID → .vcxproj LİSTESİ (dosya konumu seçme yok)** | PID seçilince çözüm/ proje konumu **otomatik** bulunur: pencere başlığı → çözüm adı → diskte .sln taraması (gevşek eşleşmeli) → .sln ayrıştırması → bulunamazsa klasörde .vcxproj taraması. Bulunan projeler **görünür bir liste diyaloğunda** sunulur (çift tık / butonla seç). Hiç bulunamazsa son çare dosya seçme diyaloğu |
+| **Tasarım kalıcılığı (proje klasöründe .m2god)** | Tasarım, bağlı projenin klasörüne **otomatik kaydedilir** (Model değişince 1.2 sn debounce + çıkışta kaydet). Aynı PID'e yeniden bağlanınca **kayıtlı tasarım algılanır** ve seçenek sunulur: **Önceki Tasarımı YÜKLE / YENİ FORM — öncekini KORU / YENİ FORM — öncekini SİL / İptal**. "VS'e bağlan - yeni form aç" yerine artık tek **"VS'ye Bağlan"** adımı var — seçenekler bağlandıktan sonra gelir |
+| **Overlay sürükleme — hayalet piksel bug'ları bitti** | Taşıma sırasında gerçek HWND **artık oynatılmaz**; kontrol gizlenir, yüzeyin üstündeki **bölgeli katman penceresi** (SetWindowRgn) hayaleti çizer. Grup kutusunun içinde "kendini kopyalamış" görüntü, "binlerce buton" kalıntısı gibi tüm artefaktlar kökünden giderildi. WS_CLIPCHILDREN kaldırıldı; boyutlandırma/klavye taşıma/kaydırma tam yeniden boya ile temiz |
+| **Konteynerden akıcı çıkış** | Taşıma sırasında konteyner clamp'i KALDIRILDI: kontrol konteynerin dışına tek hamlede serbestçe çıkar (eski davranışta kenara çarpıyor, sürükleme kesiliyor, tekrar tutmak gerekiyordu). Hedef katman bırakma anında imleçten belirlenir; **bırakma hedefi kesikli mavi çerçeveyle canlı gösterilir** |
+| **Bırakma hedefi vurgusu** | Sürükleme sırasında imlecin altındaki konteyner mavi kesikli çerçeveyle işaretlenir — kontrolün nereye alınacağı bırakmadan ÖNCE görünür. TabControl'ün sekme şeridine bırakılanlar içeri alınmaz (sayfa alanı kuralı) — yanlışlıkla yutma sürprizi bitti |
+| **Araç kutusu tıklama görseli DÜZELTİLDİ** | Araca tıklayınca vurgu artık aracın kendisinde; **kategori satırı asla seçilmiyor** (TVN_SELCHANGED düzeltmesi). Armed araç, yerleştirilene/ESC'ye kadar vurgulu kalır (VS davranışı) |
+| **Silinen nesneler ekrandan kalkıyor** | Kök neden: `Model::Delete` gerçek HWND'yi yok etmiyordu — hayalet ekranda kalıyordu. Artık silme alt kontrollerle birlikte HWND'leri de yok eder; "Yeni Tasarım" HWND sızıntısı da giderildi |
+| **Renk/Yazı tipi/Boyut/enum düzenleme çalışıyor** | Kök neden: `CBN_SELCHANGE / CBN_KILLFOCUS / EN_KILLFOCUS` bildirimleri **WM_COMMAND ile gelir** — eski kod bunları WM_NOTIFY içinde arıyordu, hiç tetiklenmiyordu. Ayrıca: renk kombosu açılır liste + **Özel renk... (ChooseColor)**, yazı tipi kombosu + **Yazı tipi seç... (ChooseFont)**, enum/bool seçimi anında işler, liste kaydırılınca açık düzenleyici güvenle kapanır (LVN_BEGINSCROLL) |
+| **Z-sırası garanti** | Oluşturma sırası = z-sırası (son eklenen üstte) — yeniden bağlanma/yükleme sonrası da korunur; aynı-katman bırakmalarda HWND model konumuna zorla hizalanır |
+| **Geniş dize düzeltmesi** | mingw derlemede `swprintf %s` C99 anlamıyla multibyte okuyordu (PID satırları tek harf görünüyordu) → tüm biçimler `%ls` |
+
+### Faz 2.3 doğrulama kanıtları (Wine + otomasyon, sahte devenv ile uçtan uca)
+- Sahte devenv.exe (başlık: "MayFarm - Microsoft Visual Studio") + diskte `source/repos/MayFarm/MayFarm.sln` kurgusu
+- Karşılama → PID seç → **Proje Seç listesi** (2 vcxproj tam yollarıyla) → Bağlan → `Form1.h/.cpp/Form1.m2god` proje klasöründe oluşturuldu
+- Buton yerleştirildi → **"Otomatik kaydedildi: Form1.m2god"** → uygulama kapatılıp açıldı → aynı PID'e bağlanınca **"Bu Proje İçin Kayıtlı Tasarım Var"** → YÜKLE → buton geri geldi
+- Araç tıklama vurgusu araçta; hayalet sürükleme katmanı konteyner üzerinde temiz; tek hamlede konteynerden çıkış (Location 224,-112 → clamp yok); bırakınca içine/dışına alma doğru
+- Silme → kontrol tamamen kayboldu; ClientSize 700,500 → form küçüldü; BackColor "Red" → tuval kırmızı; MaximizeBox → Down ile False anında işlendi
+- Z-sırası: önce GroupBox, sonra TabControl → **TabControl üstte**, grup çerçevesi altta kırpılıyor
 
 ## Faz 2.2 — Yenilikler (kullanıcı geri bildirimi üzerine)
 
