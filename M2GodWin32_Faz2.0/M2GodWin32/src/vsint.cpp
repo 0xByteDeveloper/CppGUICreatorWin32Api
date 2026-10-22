@@ -103,8 +103,128 @@ void Disconnect() {
 }
 
 // ---------------------------------------------------------------------------
-// ROT: çalışan DTE örnekleri
+// Süreç + pencere taraması (YÖNETİCİ UYUMLU — eski projenin sağlam yöntemi)
 // ---------------------------------------------------------------------------
+// Başlık: "SolutionName - Microsoft Visual Studio" (+ " (Running)" vb. ekler)
+static std::wstring SolutionFromTitle(const std::wstring& title) {
+    std::wstring t = title;
+    size_t p = t.find(L" - Microsoft Visual Studio");
+    if (p != std::wstring::npos) t = t.substr(0, p);
+    const wchar_t* marks[] = { L" (Running)", L" (Debugging)", L" (Building)", L" (Designing)", L" (Başlatılıyor)" };
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (const wchar_t* m : marks) {
+            size_t ml = wcslen(m);
+            if (t.size() > ml && _wcsnicmp(t.c_str() + t.size() - ml, m, ml) == 0) {
+                t = t.substr(0, t.size() - ml); changed = true;
+            }
+        }
+    }
+    size_t par = t.rfind(L" (1 of");
+    if (par != std::wstring::npos && !t.empty() && t.back() == L')') t = t.substr(0, par);
+    return Trim(t);
+}
+
+static std::wstring ProcessExePath(DWORD pid) {
+    std::wstring out;
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (h) {
+        wchar_t buf[MAX_PATH * 2] = { 0 };
+        DWORD sz = MAX_PATH * 2;
+        if (QueryFullProcessImageNameW(h, 0, buf, &sz)) out = buf;
+        CloseHandle(h);
+    }
+    return out;
+}
+
+// PID'nin ana VS penceresi: en büyük görünür sahipsiz üst-seviye pencere
+static HWND MainWndForPid(DWORD pid) {
+    std::vector<HWND> cands;
+    struct Pass { std::vector<HWND>* out; DWORD pid; } p = { &cands, pid };
+    EnumWindows([](HWND h, LPARAM lp) -> BOOL {
+        Pass* pp = (Pass*)lp;
+        DWORD wpid = 0;
+        GetWindowThreadProcessId(h, &wpid);
+        if (wpid != pp->pid) return TRUE;
+        if (!IsWindowVisible(h)) return TRUE;
+        if (GetWindow(h, GW_OWNER)) return TRUE;
+        wchar_t title[64] = { 0 };
+        if (!GetWindowTextW(h, title, 64)) return TRUE;
+        pp->out->push_back(h);
+        return TRUE;
+    }, (LPARAM)&p);
+    HWND best = nullptr;
+    long long bestArea = -1;
+    for (HWND h : cands) {
+        RECT rc;
+        if (!GetWindowRect(h, &rc)) continue;
+        long long area = (long long)(rc.right - rc.left) * (rc.bottom - rc.top);
+        wchar_t cls[128] = { 0 };
+        GetClassNameW(h, cls, 128);
+        // VS2019 WPF ana pencere sınıfları öncelikli (HwndWrapper[DefaultDomain...])
+        if (wcsstr(cls, L"HwndWrapper") == cls || wcscmp(cls, L"windowsApp") == 0 || wcscmp(cls, L" devenv") == 0)
+            area += 1LL << 40;
+        if (area > bestArea) { bestArea = area; best = h; }
+    }
+    return best;
+}
+
+// Bilinen köklerde çözüm dosyası ara (DTE yoksa)
+std::wstring FindSlnOnDisk(const std::wstring& solutionName) {
+    if (solutionName.empty()) return L"";
+    std::vector<std::wstring> roots;
+    wchar_t buf[MAX_PATH] = { 0 };
+    DWORD n = GetEnvironmentVariableW(L"USERPROFILE", buf, MAX_PATH);
+    std::wstring home = (n > 0 && n < MAX_PATH) ? buf : L"C:\\Users\\Public";
+    roots.push_back(home + L"\\source\\repos");
+    roots.push_back(home + L"\\Documents\\Visual Studio 2019\\Projects");
+    roots.push_back(home + L"\\Documents\\Visual Studio 2022\\Projects");
+    roots.push_back(home + L"\\Documents\\Visual Studio 2017\\Projects");
+    roots.push_back(home + L"\\Desktop");
+    roots.push_back(home + L"\\Documents");
+    // derinlik 3: kök/şey/<ad>/*.sln veya kök/<ad>/<ad>/*.sln
+    for (auto& root : roots) {
+        if (!FileExists(root + L"\\.")) continue;   // klasör yoksa atla
+        // doğrudan kök/alt klasörlerde ara
+        WIN32_FIND_DATAW fd;
+        HANDLE hf = FindFirstFileW((root + L"\\*").c_str(), &fd);
+        if (hf == INVALID_HANDLE_VALUE) continue;
+        do {
+            std::wstring name = fd.cFileName;
+            if (name == L"." || name == L"..") continue;
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+            std::wstring dir = root + L"\\" + name;
+            // bu klasörde sln var mı?
+            HANDLE hf2 = FindFirstFileW((dir + L"\\*.sln").c_str(), &fd);
+            if (hf2 != INVALID_HANDLE_VALUE) {
+                std::wstring sln = fd.cFileName;
+                FindClose(hf2);
+                if (_wcsicmp(Lower(sln).substr(0, sln.size() - 4).c_str(), Lower(solutionName).c_str()) == 0)
+                    return dir + L"\\" + sln;
+            } else FindClose(hf2);
+            // bir seviye daha derin
+            HANDLE hf3 = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+            if (hf3 != INVALID_HANDLE_VALUE) {
+                do {
+                    std::wstring n2 = fd.cFileName;
+                    if (n2 == L"." || n2 == L".." || !(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+                    std::wstring dir2 = dir + L"\\" + n2;
+                    HANDLE hf4 = FindFirstFileW((dir2 + L"\\*.sln").c_str(), &fd);
+                    if (hf4 != INVALID_HANDLE_VALUE) {
+                        std::wstring sln = fd.cFileName;
+                        FindClose(hf4);
+                        if (_wcsicmp(Lower(sln).substr(0, sln.size() - 4).c_str(), Lower(solutionName).c_str()) == 0)
+                            return dir2 + L"\\" + sln;
+                    } else FindClose(hf4);
+                } while (FindNextFileW(hf3, &fd));
+                FindClose(hf3);
+            }
+        } while (FindNextFileW(hf, &fd));
+        FindClose(hf);
+    }
+    return L"";
+}
 static bool CollectDteFromROT(std::vector<VSInstance>& out) {
     IRunningObjectTable* rot = nullptr;
     IEnumMoniker* em = nullptr;
@@ -180,45 +300,98 @@ static bool CollectDteFromROT(std::vector<VSInstance>& out) {
     return true;
 }
 
-// DTE bulunamayan (veya COM hata veren) örnekler için pencere taraması
-static void CollectFromWindows(std::vector<VSInstance>& out) {
-    struct Ctx { std::vector<VSInstance>* v; };
-    Ctx ctx{ &out };
-    EnumWindows([](HWND h, LPARAM lp) -> BOOL {
-        Ctx* c = (Ctx*)lp;
-        wchar_t cls[64] = L"", title[512] = L"";
-        GetClassNameW(h, cls, 64);
-        if (wcscmp(cls, L" devenv") != 0) return TRUE;   // devenv ana sınıfı öndeki boşlukla gelir
-        GetWindowTextW(h, title, 512);
-        std::wstring t = title;
-        size_t p = t.find(L" - Microsoft Visual Studio");
-        if (p == std::wstring::npos) return TRUE;
-        DWORD pid = 0;
-        GetWindowThreadProcessId(h, &pid);
-        std::wstring solName = t.substr(0, p);
-        // " (Running)" eki temizle
-        size_t rp = solName.find(L" (");
-        if (rp != std::wstring::npos) solName = solName.substr(0, rp);
-        // zaten var mı?
-        for (auto& i : *c->v) if (i.pid == pid) return TRUE;
-        VSInstance inst;
-        inst.pid = pid; inst.hwnd = h; inst.solutionName = solName;
-        inst.hasDte = false;
-        c->v->push_back(inst);
-        return TRUE;
-    }, (LPARAM)&ctx);
-}
+// DTE bulunamayan (veya COM hata veren) örnekler için pencere taraması —
+// artık süreç tabanlı tarama Enumerate() içinde yapılıyor (yönetici uyumlu)
+static void CollectFromWindows(std::vector<VSInstance>& out) { (void)out; }
 
 std::vector<VSInstance> Enumerate() {
     std::vector<VSInstance> out;
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    CollectDteFromROT(out);
-    CollectFromWindows(out);
-    // pid 0 olanları eşle
-    for (auto& i : out) {
-        if (!i.pid && i.hwnd) { DWORD p = 0; GetWindowThreadProcessId(i.hwnd, &p); i.pid = p; }
+    // 1) DTE (ROT) — varsa tam çözüm yolu verir. Yönetici modunda başarısız
+    //    olabilir; o durumda pencere/süreç taraması devreye girer.
+    std::vector<VSInstance> dteList;
+    CollectDteFromROT(dteList);
+    // 2) devenv.exe süreçleri (Toolhelp32) — her ayrıcalık seviyesinde çalışır
+    std::vector<DWORD> pids;
+    {
+        HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snap != INVALID_HANDLE_VALUE) {
+            PROCESSENTRY32W pe; pe.dwSize = sizeof(pe);
+            if (Process32FirstW(snap, &pe)) {
+                do {
+                    if (_wcsicmp(pe.szExeFile, L"devenv.exe") == 0)
+                        pids.push_back(pe.th32ProcessID);
+                } while (Process32NextW(snap, &pe));
+            }
+            CloseHandle(snap);
+        }
     }
-    return out;
+    std::vector<VSInstance> winList;
+    for (DWORD pid : pids) {
+        VSInstance inst;
+        inst.pid = pid;
+        inst.exePath = ProcessExePath(pid);
+        inst.hwnd = MainWndForPid(pid);
+        if (inst.hwnd) {
+            wchar_t title[1024] = { 0 };
+            GetWindowTextW(inst.hwnd, title, 1024);
+            inst.title = title;
+            inst.solutionName = SolutionFromTitle(inst.title);
+        }
+        winList.push_back(inst);
+    }
+    // 3) DTE örneklerini süreçlere eşle (ProcessID > HWND > sıra)
+    auto pidOfDte = [](const VSInstance& d) -> DWORD {
+        return d.pid;   // CollectDteFromROT ProcessID okuyor
+    };
+    for (auto& d : dteList) {
+        bool merged = false;
+        DWORD dp = pidOfDte(d);
+        for (auto& w : winList) {
+            if ((dp && w.pid == dp) || (!dp && w.hwnd && w.hwnd == d.hwnd)) {
+                w.hasDte = true;
+                w.dte = d.dte;           // sahipliği pencere örneğine devret
+                w.progId = d.progId;
+                w.version = d.version;
+                if (!d.solutionPath.empty()) w.solutionPath = d.solutionPath;
+                if (d.hwnd && !w.hwnd) w.hwnd = d.hwnd;
+                merged = true;
+                break;
+            }
+        }
+        if (!merged) {
+            // penceresi bulunamayan DTE örneği (arka plan) — yine de listele
+            VSInstance w;
+            w.pid = dp;
+            w.hasDte = true;
+            w.dte = d.dte;
+            w.progId = d.progId;
+            w.version = d.version;
+            w.hwnd = d.hwnd;
+            w.solutionPath = d.solutionPath;
+            w.solutionName = d.solutionName;
+            winList.push_back(w);
+        }
+    }
+    // 4) çözüm yolu/yoksa diskte ara + çözümdeki projeleri listele
+    for (auto& w : winList) {
+        if (!w.pid && w.hwnd) { DWORD p = 0; GetWindowThreadProcessId(w.hwnd, &p); w.pid = p; }
+        if (w.solutionPath.empty() && !w.solutionName.empty())
+            w.solutionPath = FindSlnOnDisk(w.solutionName);
+        if (!w.solutionPath.empty()) {
+            w.projects = EnumerateProjectsOfSolution(w.solutionPath);
+        }
+    }
+    // DTE-only örneklerde solutionName boşsa yolu kullan
+    for (auto& w : winList) {
+        if (w.solutionName.empty() && !w.solutionPath.empty()) {
+            std::wstring n = GetFileName(w.solutionPath);
+            size_t dot = n.rfind(L'.');
+            if (dot != std::wstring::npos) n = n.substr(0, dot);
+            w.solutionName = n;
+        }
+    }
+    return winList;
 }
 
 // --- proje yolu çözümleme ------------------------------------------------------
@@ -259,18 +432,10 @@ bool Connect(VSInstance& inst, const std::wstring& projectPath) {
     g_conn = inst;
     g_conn.projectPath = projectPath;
     g_conn.projectName = GetFileName(projectPath);
-    if (!inst.solutionPath.empty()) {
-        auto projs = EnumerateProjectsOfSolution(inst.solutionPath);
-        (void)projs;
-    }
     return true;
 }
 
-// ===PART2===
-
-// ---------------------------------------------------------------------------
-// Dosya + proje entegrasyonu
-// ---------------------------------------------------------------------------
+// Bağlantı sonrası: Form1.h/.cpp'i proje klasöründe garanti et + vcxproj'a ekle
 // .vcxproj'a Form1.h/.cpp girdilerini ekle (yoksa)
 static bool InjectIntoVcxproj(const std::wstring& vcxprojPath) {
     std::string data;
@@ -307,6 +472,53 @@ static bool InjectIntoVcxproj(const std::wstring& vcxprojPath) {
     return changed;
 }
 
+// Klasördeki .vcxproj'u bulup Form1 girdilerini ekle
+static bool InjectIntoVcxprojDir(const std::wstring& dir) {
+    WIN32_FIND_DATAW fd;
+    HANDLE hf = FindFirstFileW((dir + L"\\*.vcxproj").c_str(), &fd);
+    if (hf == INVALID_HANDLE_VALUE) return false;
+    std::wstring first = fd.cFileName;
+    FindClose(hf);
+    return InjectIntoVcxproj(dir + L"\\" + first);
+}
+
+
+bool PrepareProjectFiles() {
+    if (!IsConnected() || g_conn.projectPath.empty()) return false;
+    std::wstring dir = g_conn.projectPath;
+    std::wstring h = dir + L"\\Form1.h";
+    std::wstring cpp = dir + L"\\Form1.cpp";
+    bool created = false;
+    if (!FileExists(h)) { WriteFileText(h, WideToUtf8(codegen::GenerateForm1H())); created = true; }
+    if (!FileExists(cpp)) { WriteFileText(cpp, WideToUtf8(codegen::GenerateForm1Cpp())); created = true; }
+    // DTE varsa Solution Explorer'da göster
+    if (g_conn.dte) {
+        Disp d(g_conn.dte);
+        VARIANT solv = d.Get(L"Solution");
+        if (solv.vt == VT_DISPATCH && solv.pdispVal) {
+            Disp ds(solv.pdispVal);
+            VARIANT args = Disp::BStr(h.c_str());
+            VARIANT it = ds.Call(L"FindProjectItem", &args, 1);
+            VariantClear(&args);
+            if (it.vt == VT_DISPATCH && it.pdispVal) {
+                Disp di(it.pdispVal);
+                di.Call(L"Expand");
+            }
+            VariantClear(&it);
+        }
+        VariantClear(&solv);
+    }
+    // her durumda vcxproj güncel olsun (VS harici değişikliği algılayıp yeniden yükler)
+    InjectIntoVcxprojDir(dir);
+    if (created) Status(L"Form1.h / Form1.cpp oluşturuldu → " + g_conn.projectName);
+    return true;
+}
+
+// ===PART2===
+
+// ---------------------------------------------------------------------------
+// Dosya + proje entegrasyonu
+// ---------------------------------------------------------------------------
 // Projeye Form1 dosyalarını ekle (DTE varsa AddFromFile, yoksa vcxproj yamala)
 static bool AddFormFilesToProject(const VSInstance& inst) {
     std::wstring dir = inst.projectPath;
@@ -332,7 +544,7 @@ static bool AddFormFilesToProject(const VSInstance& inst) {
         VariantClear(&solv);
     }
     // her durumda vcxproj güncel olsun (VS harici değişikliği algılayıp yeniden yükler)
-    InjectIntoVcxproj(inst.projectPath);
+    InjectIntoVcxprojDir(dir);
     return created;
 }
 

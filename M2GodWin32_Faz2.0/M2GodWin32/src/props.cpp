@@ -192,7 +192,6 @@ static void AddPropRow(const ElementDef* def, const wchar_t* name, const std::ws
     r.readOnly = readOnly;
     s_rows.push_back(r);
 }
-
 static void FillRows() {
     s_rows.clear();
     if (g_model.formSelected || !g_model.selected) {
@@ -322,11 +321,11 @@ static LRESULT CALLBACK PanelProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
     case WM_NOTIFY: {
         NMHDR* nm = (NMHDR*)l;
-        break; // sekme notify artık kullanılmıyor
         if (nm->idFrom == IDC_PROPS_LIST) {
             if (nm->code == NM_CUSTOMDRAW) return ListCustomDraw((NMLVCUSTOMDRAW*)l);
             if (nm->code == NM_CLICK || nm->code == NM_DBLCLK) {
                 NMITEMACTIVATE* ia = (NMITEMACTIVATE*)l;
+                if (ia->iItem < 0 || ia->iItem >= (int)s_rows.size()) return 0;
                 if (ia->iItem >= 0 && ia->iSubItem == 1) {
                     if (nm->code == NM_DBLCLK && s_rows[ia->iItem].isEvent) {
                         Row& r = s_rows[ia->iItem];
@@ -390,7 +389,10 @@ static LRESULT CALLBACK PanelProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         // seçim etiketi
         SelectObject(dc, g_fontUI);
         std::wstring cap2;
-        if (g_model.formSelected || !g_model.selected) cap2 = L"Form1 — System.Windows.Forms.Form";
+        if (g_model.formSelected || !g_model.selected) {
+            std::wstring fn = g_model.formProps.count(L"Name") ? g_model.formProps[L"Name"] : L"Form1";
+            cap2 = fn + L" — System.Windows.Forms.Form";
+        }
         else cap2 = g_model.selected->name + L" — " + g_model.selected->type;
         RECT er = { 0, 28, rc.right, 50 };
         SetTextColor(dc, RGB(40, 40, 40));
@@ -441,6 +443,28 @@ void Refresh(HWND panel) {
     EndEdit(s_panel, false);
     FillRows(); SyncList();
     InvalidateRect(s_caption, nullptr, TRUE);
+}
+
+// SÜRÜKLEME SIRASINDA hafif güncelleme: liste yeniden kurulmaz (flicker yok),
+// sadece Location/Size satırlarının metni güncellenir
+void UpdateLiveGeometry() {
+    if (g_model.formSelected || !g_model.selected) return;
+    Ctrl* c = g_model.selected;
+    wchar_t b1[64], b2[64];
+    swprintf(b1, 64, L"%d, %d", c->x, c->y);
+    swprintf(b2, 64, L"%d, %d", c->w, c->h);
+    int n = (int)s_rows.size();
+    for (int i = 0; i < n; i++) {
+        if (s_rows[i].isEvent) continue;
+        if (s_rows[i].name == L"Location") {
+            s_rows[i].value = b1;
+            ListView_SetItemText(s_list, i, 1, b1);
+        } else if (s_rows[i].name == L"Size") {
+            s_rows[i].value = b2;
+            ListView_SetItemText(s_list, i, 1, b2);
+        }
+    }
+    InvalidateRect(s_list, nullptr, FALSE);
 }
 
 void ApplyPending(HWND panel) {

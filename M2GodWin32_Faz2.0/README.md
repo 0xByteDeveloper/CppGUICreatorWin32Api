@@ -1,9 +1,31 @@
-# M2GodWin32 — Faz 2.0 God Mode MVP
+# M2GodWin32 — Faz 2.1 God Mode MVP
 
 **Visual Studio 2019 C++ CLR Form Designer deneyimini Win32 API ile yaşatan, tam kapsamlı görsel UI tasarım ortamı.**
 
-> Bu proje `CppGUICreatorWin32Api` deposunun **Faz 2.0** geliştirme aşamasıdır.
+> Bu proje `CppGUICreatorWin32Api` deposunun **Faz 2.1** geliştirme aşamasıdır.
 > Katalog kaynağı olarak depodaki **Config_info.json** (.NET Framework WinForms tam eleman kataloğu: 144 eleman, tüm property'ler + event'ler + 203 enum) kullanılır.
+
+
+---
+
+## Faz 2.1 — Yenilikler (Geri bildirim üzerine)
+
+| Düzeltme / Yeni Özellik | Ayrıntı |
+|---|---|
+| **Karşılama + VS Seçim Ekranı** | Program açılışta önce **çalışan VS örneklerini** listeler (PID + çözüm + proje adı). Seçilen örneğe bağlanır, **Form1.h/Form1.cpp'i o VS projesinin klasöründe oluşturur** ve **SIFIR (boş) form** açar. "Önceki tasarımı aç" ile eski .m2god/.cpp yüklenir, "VS'siz devam et" ile boş form açılır |
+| **Yönetici modu uyumlu VS taraması** | Tarama artık `devenv.exe` süreçlerini **Toolhelp32** ile bulur + ana pencere başlığından çözüm adını okur (yüksek bütünlük seviyesinde de çalışır). DTE (ROT) varsa zenginleştirir; yoksa pencere modu |
+| **PID seçince çökme DÜZELTİLDİ** | VS bağlan diyaloğu artık gerçek **modal** + veri heap'te (use-after-free giderildi); çok projetli çözümde proje seçim menüsü |
+| **Konteyner iç içe (parent-child)** | Panel / GroupBox / TabControl / FlowLayoutPanel içine **kontrol bırakılabilir**. Çocuk konteynerin gerçek HWND çocuğu olur: **konteyneri sürükleyince çocuklar birlikte gelir**, koordinatlar parent-görelisi tutulur ve üretilen koda da aynı hiyerarşi yansır |
+| **Sürükleyip içine/dışına alma** | Bir kontrolü sürükleyip GroupBox/Panel üstüne bırakınca **içine alınır**; dışarı çıkarınca forma döner (VS davranışı) |
+| **Z-sırası kuralı** | Oluşturma sırası = z-sırası (son eklenen üstte). Hit-test parent zincirine duyarlı: üstteki kontrol seçilir, konteyner değil çocuğu taşınır |
+| **Tıkla-Yerleştir (VS gibi)** | Araç kutusunda nesneye **tek tık** → imleç formda artı (cross) olur → tıklanan yere nesne eklenir → imleç normale döner. **ESC** her odakta iptal eder |
+| **Araç kutusu arama** | Üstteki arama kutusuna yazınca liste anlık filtrelenir |
+| **Sağ tık bağlam menüsü** | Sil / Kes / Kopyala / Yapıştır / Öne Getir / Arkaya Gönder + varsayılan olay işleyicisi — Silme artık her koşulda çalışır |
+| **Silme tuşu düzeltmeleri** | Delete hem yüzeyde hem hızlandırıcıyla güvenli; metin düzenleyicideyken (özellik paneli) yanlışlıkla kontrol silinmez; Ctrl+C/X/V artık edit kutularında metin kopyalar |
+| **Flicker giderildi** | Sürükleme sırasında özellik paneli yeniden kurulmaz — yalnızca Location/Size değerleri canlı güncellenir |
+| **Sıfır form** | "Yeni" gerçekten boştur; açılışta demo nesneler yoktur (eski demo `--demo` bayrağıyla açılır) |
+| **CodeGen parent-aware** | Üretilen `CreateWindowExW` çağrıları konteyner çocuğunu konteynerin HWND'sine yaratır; BS_GROUPBOX/BS_AUTOCHECKBOX/BS_AUTORADIOBUTTON stil metinleri düzeltildi |
+| **Diyalog arka planı** | Bağlan/kod diyaloğundaki siyah arka plan düzeltildi |
 
 ---
 

@@ -5,6 +5,55 @@
 
 Model g_model;
 
+// Konteyner tipleri: içine kontrol bırakılabilir
+bool IsContainerType(const std::wstring& type) {
+    static const wchar_t* k[] = {
+        L"Panel", L"FlowLayoutPanel", L"TableLayoutPanel", L"SplitContainer",
+        L"GroupBox", L"TabControl", L"TabPage"
+    };
+    for (auto* s : k) if (_wcsicmp(s, type.c_str()) == 0) return true;
+    return false;
+}
+
+std::vector<Ctrl*> Model::ChildrenOf(Ctrl* p) const {
+    std::vector<Ctrl*> out;
+    for (auto* c : ctrls) if (c->parent == p) out.push_back(c);
+    return out;   // listedeki sıra = oluşturma sırası = z-sırası (son = üstte)
+}
+
+bool Model::IsAncestorOf(Ctrl* a, Ctrl* c) const {
+    for (Ctrl* p = c ? c->parent : nullptr; p; p = p->parent)
+        if (p == a) return true;
+    return false;
+}
+
+int Model::DepthOf(const Ctrl* c) const {
+    int d = 0;
+    for (Ctrl* p = c ? c->parent : nullptr; p; p = p->parent) d++;
+    return d;
+}
+
+POINT Model::AbsPos(const Ctrl* c) const {
+    POINT p = { 0, 0 };
+    for (Ctrl* q = (Ctrl*)c; q; q = q->parent) { p.x += q->x; p.y += q->y; }
+    return p;
+}
+
+void Model::Reparent(Ctrl* c, Ctrl* newParent, int px, int py) {
+    if (!c || c == newParent || IsAncestorOf(c, newParent)) return;
+    if (c->parent == newParent) { c->x = px; c->y = py; }
+    else {
+        c->parent = newParent;
+        c->x = px; c->y = py;
+        if (c->hwnd) {
+            HWND ph = newParent ? newParent->hwnd : GetDlgItem(g_hMain, IDC_SURFACE);
+            if (ph) SetParent(c->hwnd, ph);
+        }
+    }
+    wchar_t b[64]; swprintf(b, 64, L"%d, %d", c->x, c->y);
+    c->props[L"Location"] = b;
+}
+
 UINT Model::NextCid() {
     UINT id = 3001;
     bool clash = true;
@@ -26,12 +75,13 @@ std::wstring Model::UniqueName(const std::wstring& type) {
     return base + L"_x";
 }
 
-Ctrl* Model::Add(const std::wstring& type, int x, int y) {
+Ctrl* Model::Add(const std::wstring& type, int x, int y, Ctrl* parent) {
     const ElementDef* def = g_catalog.Find(type);
     if (!def) return nullptr;
     Ctrl* c = new Ctrl();
     c->name = UniqueName(type);
     c->type = type;
+    c->parent = parent;
     c->x = x; c->y = y; c->w = 100; c->h = 30;
     c->cid = NextCid();
     c->nonVisual = def->winClass.empty();
@@ -59,7 +109,9 @@ Ctrl* Model::Add(const std::wstring& type, int x, int y) {
 
 void Model::Delete(Ctrl* c) {
     if (!c) return;
-    if (selected == c) { selected = nullptr; formSelected = true; }
+    // alt kontrolleri de sil (derinlemesine)
+    for (auto* k : ChildrenOf(c)) Delete(k);
+    if (selected == c || IsAncestorOf(c, selected)) { selected = nullptr; formSelected = true; }
     for (size_t i = 0; i < ctrls.size(); i++)
         if (ctrls[i] == c) { ctrls.erase(ctrls.begin() + i); break; }
     delete c;
@@ -110,14 +162,33 @@ void Model::Rename(Ctrl* c, const std::wstring& newName) {
 }
 
 void Model::BringToFront(Ctrl* c) {
-    for (size_t i = 0; i < ctrls.size(); i++)
-        if (ctrls[i] == c) { ctrls.erase(ctrls.begin() + i); ctrls.push_back(c); break; }
-    if (c->hwnd) SetWindowPos(c->hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    if (!c) return;
+    // kardeşler arasında en üste taşı (düz listede son kardeşin arkasına)
+    for (size_t i = 0; i < ctrls.size(); i++) {
+        if (ctrls[i] == c) {
+            ctrls.erase(ctrls.begin() + i);
+            size_t last = ctrls.size();
+            for (size_t j = 0; j < ctrls.size(); j++)
+                if (ctrls[j]->parent == c->parent) last = j + 1;
+            ctrls.insert(ctrls.begin() + last, c);
+            break;
+        }
+    }
+    if (c->hwnd) SetWindowPos(c->hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 void Model::SendToBack(Ctrl* c) {
-    for (size_t i = 0; i < ctrls.size(); i++)
-        if (ctrls[i] == c) { ctrls.erase(ctrls.begin() + i); ctrls.insert(ctrls.begin(), c); break; }
-    if (c->hwnd) SetWindowPos(c->hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    if (!c) return;
+    for (size_t i = 0; i < ctrls.size(); i++) {
+        if (ctrls[i] == c) {
+            ctrls.erase(ctrls.begin() + i);
+            size_t first = 0;
+            for (size_t j = 0; j < ctrls.size(); j++)
+                if (ctrls[j]->parent == c->parent) { first = j; break; }
+            ctrls.insert(ctrls.begin() + first, c);
+            break;
+        }
+    }
+    if (c->hwnd) SetWindowPos(c->hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 void Model::ClearAll() {
     for (auto* c : ctrls) delete c;
@@ -176,6 +247,7 @@ json::Value Model::ToJson() const {
         json::Value o = json::Value::MakeObj();
         o.Set(L"name", c->name);
         o.Set(L"type", c->type);
+        o.Set(L"Parent", c->parent ? c->parent->name : L"");
         json::Value p = json::Value::MakeObj();
         for (auto& kv : c->props) p.Set(kv.first, kv.second);
         o.Set(L"Props", p);
@@ -198,12 +270,15 @@ bool Model::FromJson(const json::Value& v) {
     }
     const json::Value& arr = v.Get(L"Controls");
     if (arr.IsArr()) {
+        // 1. geçiş: tüm kontrolleri oluştur (parent geçici olarak isimle saklanır)
+        std::map<std::wstring, std::wstring> parentNameOf;
         for (auto& o : arr.arr) {
             std::wstring type = o.Get(L"type").AsStr();
             if (!g_catalog.Find(type)) continue;
             Ctrl* c = Add(type, 20, 20);
             if (!c) continue;
             c->name = o.Get(L"name").AsStr(c->name);
+            parentNameOf[c->name] = o.Get(L"Parent").AsStr();
             const json::Value& p = o.Get(L"Props");
             if (p.IsObj()) {
                 c->props.clear();
@@ -217,6 +292,13 @@ bool Model::FromJson(const json::Value& v) {
             auto sz = Split(c->Get(L"Size", L"100, 30"), L',');
             if (sz.size() == 2) { c->w = _wtoi(Trim(sz[0]).c_str()); c->h = _wtoi(Trim(sz[1]).c_str()); }
             if (c->w < 4) c->w = 4; if (c->h < 4) c->h = 4;
+        }
+        // 2. geçiş: parent bağlantılarını kur
+        for (auto& kv : parentNameOf) {
+            if (kv.second.empty()) continue;
+            Ctrl* c = FindByName(kv.first);
+            Ctrl* p = FindByName(kv.second);
+            if (c && p && c != p && !IsAncestorOf(c, p)) c->parent = p;
         }
     }
     auto cs = Split(formProps.count(L"ClientSize") ? formProps[L"ClientSize"] : L"800, 600", L',');

@@ -17,7 +17,7 @@ void ApplyAll(Ctrl* c);
 void RegisterCustomClasses(HINSTANCE hInst);
 
 // tip → (winclass, ekstra style) — katalogdaki win32_mapping + bu tablo birleşir
-struct Win32Class { std::wstring cls; DWORD style; DWORD exstyle; std::wstring styleText; };
+struct Win32Class { std::wstring cls; DWORD style; DWORD exstyle; std::wstring styleText; int dw = 0, dh = 0; };
 Win32Class MapClass(const std::wstring& type);
 
 } // namespace factory

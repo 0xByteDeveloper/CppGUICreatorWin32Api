@@ -10,9 +10,9 @@ namespace factory {
 struct Entry { const wchar_t* type; const wchar_t* cls; DWORD style; DWORD exstyle; int w, h; const wchar_t* styleText; };
 static const Entry kMap[] = {
     { L"Button",            L"BUTTON",             WS_TABSTOP | BS_PUSHBUTTON, 0, 100, 32 , L"BS_PUSHBUTTON" },
-    { L"CheckBox",          L"BUTTON",             WS_TABSTOP | BS_AUTOCHECKBOX, 0, 120, 28 , L"BS_PUSHBUTTON" },
-    { L"RadioButton",       L"BUTTON",             WS_TABSTOP | BS_AUTORADIOBUTTON, 0, 130, 28 , L"BS_PUSHBUTTON" },
-    { L"GroupBox",          L"BUTTON",             BS_GROUPBOX, 0, 200, 120 , L"BS_PUSHBUTTON" },
+    { L"CheckBox",          L"BUTTON",             WS_TABSTOP | BS_AUTOCHECKBOX, 0, 120, 28 , L"BS_AUTOCHECKBOX" },
+    { L"RadioButton",       L"BUTTON",             WS_TABSTOP | BS_AUTORADIOBUTTON, 0, 130, 28 , L"BS_AUTORADIOBUTTON" },
+    { L"GroupBox",          L"BUTTON",             BS_GROUPBOX, 0, 200, 120 , L"BS_GROUPBOX" },
     { L"Label",             L"STATIC",             SS_LEFT | SS_NOTIFY, 0, 100, 23 , L"SS_LEFT | SS_NOTIFY" },
     { L"LinkLabel",         L"STATIC",             SS_LEFT | SS_NOTIFY, 0, 100, 23 , L"SS_LEFT | SS_NOTIFY" },
     { L"TextBox",           L"EDIT",               WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE, 140, 26 , L"WS_BORDER | ES_AUTOHSCROLL" },
@@ -60,7 +60,7 @@ Win32Class MapClass(const std::wstring& type) {
     for (auto* c : kComponents)
         if (_wcsicmp(c, type.c_str()) == 0) return { L"", 0, 0, L"" };
     for (auto& e : kMap)
-        if (_wcsicmp(e.type, type.c_str()) == 0) return { e.cls, e.style, e.exstyle, e.styleText };
+        if (_wcsicmp(e.type, type.c_str()) == 0) return { e.cls, e.style, e.exstyle, e.styleText, e.w, e.h };
     // katalogdaki win32_mapping'e bak (ör. bilinmeyen ama bilinen sınıf)
     const ElementDef* def = g_catalog.Find(type);
     if (def && !def->winClass.empty()) {
@@ -69,12 +69,12 @@ Win32Class MapClass(const std::wstring& type) {
         size_t sp = wc.find_first_of(L" /");
         if (sp != std::wstring::npos) wc = wc.substr(0, sp);
         if (wc == L"SetTimer") return { L"", 0, 0 };
-        if (_wcsicmp(wc.c_str(), L"BUTTON") == 0) return { wc, WS_TABSTOP | BS_PUSHBUTTON, 0, L"BS_PUSHBUTTON" };
-        if (_wcsicmp(wc.c_str(), L"EDIT") == 0) return { wc, WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE, L"WS_BORDER | ES_AUTOHSCROLL" };
-        if (_wcsicmp(wc.c_str(), L"STATIC") == 0) return { wc, SS_LEFT | SS_NOTIFY, 0, L"SS_LEFT | SS_NOTIFY" };
-        return { wc, WS_TABSTOP | WS_BORDER, 0, L"WS_BORDER" };
+        if (_wcsicmp(wc.c_str(), L"BUTTON") == 0) return { wc, WS_TABSTOP | BS_PUSHBUTTON, 0, L"BS_PUSHBUTTON", 100, 32 };
+        if (_wcsicmp(wc.c_str(), L"EDIT") == 0) return { wc, WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE, L"WS_BORDER | ES_AUTOHSCROLL", 140, 26 };
+        if (_wcsicmp(wc.c_str(), L"STATIC") == 0) return { wc, SS_LEFT | SS_NOTIFY, 0, L"SS_LEFT | SS_NOTIFY", 100, 23 };
+        return { wc, WS_TABSTOP | WS_BORDER, 0, L"WS_BORDER", 100, 30 };
     }
-    return { L"M2GOD_PLACEHOLDER", 0, WS_EX_CLIENTEDGE, L"0" };
+    return { L"M2GOD_PLACEHOLDER", 0, WS_EX_CLIENTEDGE, L"0", 120, 100 };
 }
 
 // --- özel sınıflar ---------------------------------------------------------
@@ -204,17 +204,16 @@ HWND CreateOnSurface(HWND surface, Ctrl* c) {
         style |= ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL;
     if (c->type == L"Label") {
         std::wstring ta = c->Get(L"TextAlign", L"TopLeft");
-        style &= ~SS_CENTER; 
+        style &= ~SS_CENTER;
         if (_wcsicmp(ta.c_str(), L"MiddleCenter") == 0 || _wcsicmp(ta.c_str(), L"TopCenter") == 0) { style |= SS_CENTER; }
         else if (_wcsicmp(ta.c_str(), L"TopRight") == 0) style |= SS_RIGHT;
     }
-    if (c->type == L"ComboBox") {
-        int n = _wtoi(c->Get(L"DropDownStyle", L"DropDown").c_str());
-        (void)n;
-    }
+    // PARENT-AWARE: konteyner çocuğu konteynerin çocuğu olarak yaratılır,
+    // koordinatlar zaten parent-görelisi (model kuralı)
+    HWND parentHwnd = (c->parent && c->parent->hwnd) ? c->parent->hwnd : surface;
     HWND h = CreateWindowExW(m.exstyle, m.cls.c_str(), L"",
                              style, c->x, c->y, c->w, c->h,
-                             surface, (HMENU)(INT_PTR)c->cid, g_hInst, nullptr);
+                             parentHwnd, (HMENU)(INT_PTR)c->cid, g_hInst, nullptr);
     if (!h) return nullptr;
     c->hwnd = h;
     // metni koy
@@ -239,7 +238,8 @@ HWND CreateOnSurface(HWND surface, Ctrl* c) {
         ti.pszText = b1; SendMessageW(h, TCM_INSERTITEMW, 0, (LPARAM)&ti);
         ti.pszText = b2; SendMessageW(h, TCM_INSERTITEMW, 1, (LPARAM)&ti);
     }
-    // tasarım modu: fare mesajlarını yüzeye aktar (HTTRANSPARENT)
+    // tasarım modu: fare mesajlarını yüzeye aktar (HTTRANSPARENT zincirlenir:
+    // konteyner çocuğu → konteyner → yüzey)
     surface::SubclassForDesign(h);
     // ilk boyamada CTLCOLORSTATIC erken geldiği için tam yeniden boya
     InvalidateRect(h, nullptr, TRUE);

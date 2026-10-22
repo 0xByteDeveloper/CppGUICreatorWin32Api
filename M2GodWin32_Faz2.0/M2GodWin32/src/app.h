@@ -82,9 +82,20 @@ constexpr int SEL_MARGIN = 4;      // seçim tutamaçları dış boşluğu
 
 // WM_COMMAND id aralıkları (araç panelleri)
 #define IDC_TOOLBOX_TREE   1001
+#define IDC_TOOLBOX_SEARCH 1002
 #define IDC_PROPS_TAB      1100
 #define IDC_PROPS_LIST     1101
 #define IDC_EVENTS_LIST    1102
 #define IDC_SURFACE        1200
 #define IDC_TOOLBAR        1300
 #define IDC_STATUSBAR      1400
+
+// Düzenleme komut id'leri (mainwnd.cpp enum'u ile aynı değerler — yüzey/araç kutusu paylaşır)
+#define M2CMD_CUT    2101
+#define M2CMD_COPY   2102
+#define M2CMD_PASTE  2103
+#define M2CMD_DELETE 2104
+#define M2CMD_UNDO   2105
+#define M2CMD_REDO   2106
+#define M2CMD_FRONT  2107
+#define M2CMD_BACK   2108

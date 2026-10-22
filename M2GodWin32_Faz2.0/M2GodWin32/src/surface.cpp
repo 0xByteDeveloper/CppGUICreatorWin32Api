@@ -1,7 +1,8 @@
-// surface.cpp — tasarım yüzeyi gerçeklemesi (Bölüm 1)
+// surface.cpp — tasarım yüzeyi (parent-child, tıkla-yerleştir, bağlam menüsü)
 #include "surface.h"
 #include "app.h"
 #include "factory.h"
+#include "toolbox.h"
 #include <commctrl.h>
 
 namespace surface {
@@ -14,12 +15,43 @@ static const int TRAY_H = 34;       // bileşen tepsisi
 static Ctrl*    s_drag = nullptr;   // taşınan/boyutlanan
 static int      s_dragMode = 0;     // 0 yok, 1 taşı, 2 boyutla
 static int      s_handle = -1;      // 0..7
-static POINT    s_start;            // fare başlangıç (ekran)
-static RECT     s_startRect;        // kontrol başlangıç rect (form koord)
+static POINT    s_start;            // fare başlangıç (yüzey client)
+static RECT     s_startRect;        // kontrol başlangıç rect (parent görelisi)
 static bool     s_started = false;  // eşik geçildi mi (undo için)
 static bool     s_gridSnap = true;
+static POINT    s_lastCursor = { 0, 0 };  // son imleç (yüzey client) — bırakma noktası
 
-// handle dikdörtgenleri (ekran koord), seçim rect'e göre
+// --- koordinat yardımcıları ----------------------------------------------------
+static RECT ClientAreaRect(HWND surf) {
+    RECT f = FormRect(surf);
+    RECT c = { f.left, f.top + TITLE_H, f.right, f.bottom - TRAY_H };
+    return c;
+}
+static RECT TrayRect(HWND surf) {
+    RECT f = FormRect(surf);
+    return { f.left, f.bottom - TRAY_H, f.right, f.bottom };
+}
+void ScreenToForm(HWND surf, int sx, int sy, int* fx, int* fy) {
+    RECT c = ClientAreaRect(surf);
+    *fx = sx - c.left;
+    *fy = sy - c.top;
+}
+// kontrolün form koordinatındaki rect'i (parent zinciri toplanır)
+static RECT AbsRect(const Ctrl* c) {
+    POINT p = g_model.AbsPos(c);
+    return { p.x, p.y, p.x + c->w, p.y + c->h };
+}
+// kontrolün yüzey client koordinatındaki rect'i
+static RECT CtrlRectOnSurface(const Ctrl* c, HWND surf) {
+    RECT cr = ClientAreaRect(surf);
+    POINT p = g_model.AbsPos(c);
+    return { cr.left + p.x, cr.top + p.y, cr.left + p.x + c->w, cr.top + p.y + c->h };
+}
+static bool VisibleCtrl(Ctrl* c) {
+    return !c->nonVisual && _wcsicmp(c->Get(L"Visible", L"True").c_str(), L"true") == 0;
+}
+
+// handle dikdörtgenleri (yüzey koord), seçim rect'e göre
 static RECT HandleRect(const RECT& sel, int idx) {
     int cx = (sel.left + sel.right) / 2, cy = (sel.top + sel.bottom) / 2;
     POINT p[8] = {
@@ -38,21 +70,60 @@ RECT FormRect(HWND surf) {
                PAD - s_scrollX + g_model.formW, PAD - s_scrollY + TITLE_H + g_model.formH };
     return f;
 }
-// kontrollerin bulunduğu client alan (başlık altı)
-static RECT ClientAreaRect(HWND surf) {
-    RECT f = FormRect(surf);
-    RECT c = { f.left, f.top + TITLE_H, f.right, f.bottom - TRAY_H };
-    return c;
+
+// --- hit-test (parent-child duyarlı) ---------------------------------------------
+// lx,ly: parent'in sol üstüne göre (parent=null → form koordinatı)
+static Ctrl* HitInEx(Ctrl* parent, int lx, int ly, Ctrl* exclude) {
+    auto kids = g_model.ChildrenOf(parent);
+    for (int i = (int)kids.size() - 1; i >= 0; i--) {
+        Ctrl* k = kids[i];
+        if (k == exclude) continue;
+        if (!VisibleCtrl(k)) continue;
+        RECT r = { k->x, k->y, k->x + k->w, k->y + k->h };
+        if (!PtInRect(&r, { lx, ly })) continue;
+        Ctrl* sub = HitInEx(k, lx - k->x, ly - k->y, exclude);
+        return sub ? sub : k;      // çocuklar her zaman parent'ın üstündedir
+    }
+    return nullptr;
 }
-static RECT TrayRect(HWND surf) {
-    RECT f = FormRect(surf);
-    return { f.left, f.bottom - TRAY_H, f.right, f.bottom };
+static Ctrl* HitAt(HWND surf, int sx, int sy, Ctrl* exclude = nullptr) {
+    int fx, fy; ScreenToForm(surf, sx, sy, &fx, &fy);
+    return HitInEx(nullptr, fx, fy, exclude);
+}
+static Ctrl* HitControl(HWND surf, int sx, int sy) { return HitAt(surf, sx, sy); }
+
+// VS kuralı: konteyner üstüne bırakılırsa içine; düz kontrol üstüne bırakılırsa
+// o kontrolün bulunduğu katmana girer
+static Ctrl* DropParentAt(HWND surf, int sx, int sy, Ctrl* dragged) {
+    Ctrl* t = HitAt(surf, sx, sy, dragged);
+    Ctrl* p = nullptr;
+    if (t) {
+        if (IsContainerType(t->type)) p = t;
+        else p = t->parent;
+    }
+    if (p && (p == dragged || g_model.IsAncestorOf(dragged, p))) p = dragged->parent;
+    return p;
 }
 
-void ScreenToForm(HWND surf, int sx, int sy, int* fx, int* fy) {
-    RECT c = ClientAreaRect(surf);
-    *fx = sx - c.left;
-    *fy = sy - c.top;
+// konteynerin "çocuk alanı": GroupBox başlığı, TabControl sekme şeridi hariç
+static void ContainerChildArea(Ctrl* cont, int& x0, int& y0, int& x1, int& y1) {
+    x0 = 0; y0 = 0; x1 = cont->w; y1 = cont->h;
+    if (_wcsicmp(cont->type.c_str(), L"GroupBox") == 0) { y0 = 20; x0 = 4; x1 -= 4; y1 -= 4; }
+    else if (_wcsicmp(cont->type.c_str(), L"TabControl") == 0) {
+        y0 = 30; x0 = 4; x1 -= 4; y1 -= 4;
+        if (cont->hwnd) {
+            RECT dr = { 0, 0, cont->w, cont->h };
+            SendMessageW(cont->hwnd, TCM_ADJUSTRECT, FALSE, (LPARAM)&dr);
+            x0 = max(0, (int)dr.left); y0 = max(0, (int)dr.top);
+            x1 = min(cont->w, (int)dr.right); y1 = min(cont->h, (int)dr.bottom);
+        }
+    }
+}
+static void ClampIntoContainer(Ctrl* cont, int& px, int& py, int w, int h) {
+    int x0, y0, x1, y1;
+    ContainerChildArea(cont, x0, y0, x1, y1);
+    px = max(x0, min(px, max(x0, x1 - w)));
+    py = max(y0, min(py, max(y0, y1 - h)));
 }
 
 // --- scrollbar yönetimi -------------------------------------------------------
@@ -94,14 +165,12 @@ static void DrawTitleBar(HDC dc, const RECT& f) {
     RECT b = { f.left, f.top + TITLE_H - 1, f.right, f.top + TITLE_H };
     HBRUSH br2 = CreateSolidBrush(RGB(213, 213, 213));
     FillRect(dc, &b, br2); DeleteObject(br2);
-    // form adı
     RECT tr = t; tr.left += 10;
     SelectObject(dc, g_fontUI);
     SetBkMode(dc, TRANSPARENT);
     std::wstring text = g_model.formProps.count(L"Text") ? g_model.formProps[L"Text"] : L"Form1";
     SetTextColor(dc, RGB(0, 0, 0));
     DrawTextW(dc, text.c_str(), -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    // sahte pencere düğmeleri
     for (int i = 0; i < 3; i++) {
         RECT r = { f.right - 66 + i * 22, f.top + 8, f.right - 48 + i * 22, f.top + 24 };
         HBRUSH wb = CreateSolidBrush(RGB(255, 255, 255));
@@ -111,8 +180,6 @@ static void DrawTitleBar(HDC dc, const RECT& f) {
 }
 
 static void DrawGrid(HDC dc, const RECT& client) {
-    HPEN dot = CreatePen(PS_SOLID, 1, RGB(222, 222, 222));
-    HPEN op = (HPEN)SelectObject(dc, dot);
     int gx = GRID_SIZE * 2;
     for (int x = gx - (s_scrollX % gx); x < client.right; x += gx) {
         if (x < client.left) continue;
@@ -121,7 +188,6 @@ static void DrawGrid(HDC dc, const RECT& client) {
             SetPixel(dc, x, y, RGB(208, 208, 208));
         }
     }
-    SelectObject(dc, op); DeleteObject(dot);
 }
 
 static void DrawComponentIcon(HDC dc, int x, int y, const std::wstring& type) {
@@ -181,11 +247,9 @@ static void DrawSelection(HWND dcH, HDC dc) {
     Ctrl* sel = g_model.selected;
     if (!sel) return;
     HWND surf = dcH;
-    RECT cr = ClientAreaRect(surf);
     RECT r;
     if (sel->nonVisual) {
         RECT tr = TrayRect(surf);
-        // tepsideki yerine göre hesapla (basit: x konumu tekrar hesapla)
         int x = tr.left + 12;
         HDC tdc = GetDC(surf);
         SelectObject(tdc, g_fontUI);
@@ -198,10 +262,9 @@ static void DrawSelection(HWND dcH, HDC dc) {
         }
         ReleaseDC(surf, tdc);
     } else {
-        r = { cr.left + sel->x - SEL_MARGIN, cr.top + sel->y - SEL_MARGIN,
-              cr.left + sel->x + sel->w + SEL_MARGIN, cr.top + sel->y + sel->h + SEL_MARGIN };
+        RECT cs = CtrlRectOnSurface(sel, surf);
+        r = { cs.left - SEL_MARGIN, cs.top - SEL_MARGIN, cs.right + SEL_MARGIN, cs.bottom + SEL_MARGIN };
     }
-    // kesikli çerçeve
     HPEN pen = CreatePen(PS_DOT, 1, RGB(0, 120, 215));
     HPEN op = (HPEN)SelectObject(dc, pen);
     HBRUSH ob = (HBRUSH)SelectObject(dc, GetStockObject(NULL_BRUSH));
@@ -224,15 +287,12 @@ static void Paint(HWND surf) {
     HDC mem = CreateCompatibleDC(dc);
     HBITMAP bmp = CreateCompatibleBitmap(dc, rc.right, rc.bottom);
     HBITMAP ob = (HBITMAP)SelectObject(mem, bmp);
-    // arka plan
     HBRUSH bg = CreateSolidBrush(RGB(229, 229, 229));
     FillRect(mem, &rc, bg); DeleteObject(bg);
     RECT f = FormRect(surf);
-    // gölge
     RECT sh = f; OffsetRect(&sh, 4, 4);
     HBRUSH shb = CreateSolidBrush(RGB(205, 205, 205));
     FillRect(mem, &sh, shb); DeleteObject(shb);
-    // form çerçevesi + içi
     FrameRect(mem, &f, (HBRUSH)GetStockObject(BLACK_BRUSH));
     COLORREF formBack = RGB(255, 255, 255);
     std::wstring fb = g_model.formProps.count(L"BackColor") ? g_model.formProps[L"BackColor"] : L"Control";
@@ -256,26 +316,14 @@ static void Paint(HWND surf) {
 static int HitHandle(HWND surf, int sx, int sy) {
     Ctrl* sel = g_model.selected;
     if (!sel || sel->nonVisual) return -1;
-    RECT cr = ClientAreaRect(surf);
-    RECT r = { cr.left + sel->x - SEL_MARGIN, cr.top + sel->y - SEL_MARGIN,
-               cr.left + sel->x + sel->w + SEL_MARGIN, cr.top + sel->y + sel->h + SEL_MARGIN };
+    RECT cs = CtrlRectOnSurface(sel, surf);
+    RECT r = { cs.left - SEL_MARGIN, cs.top - SEL_MARGIN, cs.right + SEL_MARGIN, cs.bottom + SEL_MARGIN };
     for (int i = 0; i < 8; i++) {
         RECT hr = HandleRect(r, i);
         InflateRect(&hr, 3, 3);
         if (PtInRect(&hr, { sx, sy })) return i;
     }
     return -1;
-}
-
-static Ctrl* HitControl(HWND surf, int sx, int sy) {
-    RECT cr = ClientAreaRect(surf);
-    for (int i = (int)g_model.ctrls.size() - 1; i >= 0; i--) {
-        Ctrl* c = g_model.ctrls[i];
-        if (c->nonVisual) continue;
-        RECT r = { cr.left + c->x, cr.top + c->y, cr.left + c->x + c->w, cr.top + c->y + c->h };
-        if (PtInRect(&r, { sx, sy })) return c;
-    }
-    return nullptr;
 }
 
 static Ctrl* HitTray(HWND surf, int sx, int sy) {
@@ -296,16 +344,65 @@ static Ctrl* HitTray(HWND surf, int sx, int sy) {
     return nullptr;
 }
 
+static void NotifySelChanged() {
+    PostMessageW(g_hMain, MWM_SEL_CHANGED, (WPARAM)g_model.selected, 0);
+}
+
+// eski seçim kenarları/hayalet pikseller kalmasın: tüm çocuklarla tam yeniden çiz
+static void RepaintAll(HWND surf) {
+    RedrawWindow(surf, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+}
+
+// araç kutusundan yeni kontrol yerleştir (bırakma VE tıkla-yerleştir ortak yolu)
+void PlaceNew(HWND surf, const std::wstring& type, int sx, int sy) {
+    const ElementDef* def = g_catalog.Find(type);
+    if (!def) return;
+    int fx, fy; ScreenToForm(surf, sx, sy, &fx, &fy);
+    Ctrl* parent = DropParentAt(surf, sx, sy, nullptr);
+    int px = fx, py = fy;
+    if (parent) {
+        POINT ap = g_model.AbsPos(parent);
+        px = fx - ap.x; py = fy - ap.y;
+    }
+    factory::Win32Class m = factory::MapClass(type);
+    int w = m.dw > 0 ? m.dw : 100, h = m.dh > 0 ? m.dh : 30;
+    if (s_gridSnap) { px = ((px + GRID_SIZE / 2) / GRID_SIZE) * GRID_SIZE; py = ((py + GRID_SIZE / 2) / GRID_SIZE) * GRID_SIZE; }
+    if (parent) ClampIntoContainer(parent, px, py, w, h);
+    else { px = max(0, min(px, g_model.formW - 8)); py = max(0, min(py, g_model.formH - 8)); }
+    g_model.PushUndo();
+    Ctrl* c = g_model.Add(type, px, py, parent);
+    if (!c) return;
+    c->w = w; c->h = h;
+    wchar_t b1[64], b2[64];
+    swprintf(b1, 64, L"%d, %d", c->x, c->y);
+    swprintf(b2, 64, L"%d, %d", c->w, c->h);
+    c->props[L"Location"] = b1; c->props[L"Size"] = b2;
+    factory::CreateOnSurface(surf, c);
+    g_model.selected = c; g_model.formSelected = false;
+    NotifySelChanged();
+    RepaintAll(surf);
+    PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0);
+    std::wstring where = parent ? (L" → " + parent->name + L" içine") : L"";
+    Status(type + L" eklendi: " + c->name + where);
+}
+
+// sürükleme/boyutlandırmayı uygula — koordinatlar PARENT görelisi
 static void ApplyDrag(HWND surf, int sx, int sy) {
     if (!s_drag) return;
-    RECT cr = ClientAreaRect(surf);
+    s_lastCursor = { sx, sy };
     int dx = sx - s_start.x, dy = sy - s_start.y;
     if (s_dragMode == 1) {
         int nx = s_startRect.left + dx, ny = s_startRect.top + dy;
         if (s_gridSnap) { nx = ((nx + GRID_SIZE / 2) / GRID_SIZE) * GRID_SIZE; ny = ((ny + GRID_SIZE / 2) / GRID_SIZE) * GRID_SIZE; }
-        nx = max(0, min(nx, g_model.formW - 8)); ny = max(0, min(ny, g_model.formH - 8));
+        if (s_drag->parent) {
+            int maxW = s_drag->parent->w - s_drag->w, maxH = s_drag->parent->h - s_drag->h;
+            nx = max(0, min(nx, max(0, maxW)));
+            ny = max(0, min(ny, max(0, maxH)));
+        } else {
+            nx = max(0, min(nx, g_model.formW - 8));
+            ny = max(0, min(ny, g_model.formH - 8));
+        }
         s_drag->x = nx; s_drag->y = ny;
-        SetWindowPos(s_drag->hwnd, nullptr, cr.left + nx, cr.top + ny, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         wchar_t b[64]; swprintf(b, 64, L"%d, %d", nx, ny);
         s_drag->props[L"Location"] = b;
     } else {
@@ -324,18 +421,80 @@ static void ApplyDrag(HWND surf, int sx, int sy) {
         if (s_gridSnap) { nw = max(GRID_SIZE, ((nw + GRID_SIZE / 2) / GRID_SIZE) * GRID_SIZE); nh = max(GRID_SIZE, ((nh + GRID_SIZE / 2) / GRID_SIZE) * GRID_SIZE); }
         nw = max(8, nw); nh = max(8, nh);
         s_drag->x = x0; s_drag->y = y0; s_drag->w = nw; s_drag->h = nh;
-        SetWindowPos(s_drag->hwnd, nullptr, cr.left + x0, cr.top + y0, nw, nh, SWP_NOZORDER | SWP_NOACTIVATE);
         wchar_t b1[64], b2[64];
         swprintf(b1, 64, L"%d, %d", x0, y0); swprintf(b2, 64, L"%d, %d", nw, nh);
         s_drag->props[L"Location"] = b1; s_drag->props[L"Size"] = b2;
     }
+    PositionOne(surf, s_drag);
     InvalidateRect(surf, nullptr, FALSE);
-    PostMessageW(g_hMain, MWM_PROPS_APPLIED, 0, 0);
+    PostMessageW(g_hMain, MWM_PROPS_APPLIED, 0, 0);   // hafif güncelleme (flicker yok)
 }
 
-static void NotifySelChanged() {
-    PostMessageW(g_hMain, MWM_SEL_CHANGED, (WPARAM)g_model.selected, 0);
+// sürükleme bitince: imlecin üstündeki konteynere al (VS davranışı)
+static void FinishDragReparent(HWND surf, Ctrl* dragged) {
+    if (!dragged) { PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0); return; }
+    Ctrl* newParent = DropParentAt(surf, s_lastCursor.x, s_lastCursor.y, dragged);
+    if (newParent != dragged->parent) {
+        int fx, fy; ScreenToForm(surf, s_lastCursor.x, s_lastCursor.y, &fx, &fy);
+        // kontrolün sol üstünü koru (imleç konumu değil)
+        RECT ar = AbsRect(dragged);
+        int px = ar.left, py = ar.top;
+        if (newParent) {
+            POINT ap = g_model.AbsPos(newParent);
+            px -= ap.x; py -= ap.y;
+        }
+        if (newParent) ClampIntoContainer(newParent, px, py, dragged->w, dragged->h);
+        g_model.Reparent(dragged, newParent, px, py);
+        PositionOne(surf, dragged);
+        InvalidateRect(surf, nullptr, TRUE);
+        RedrawWindow(surf, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+        NotifySelChanged();   // props panelini tazele (parent-görelisi değerler)
+        std::wstring where = newParent ? (newParent->name + L" içine alındı") : L"forma alındı";
+        Status(dragged->name + L" " + where);
+    }
+    PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0);
 }
+
+// seçili kontrolün varsayılan olay adı
+static std::wstring EvNameOf(Ctrl* c) {
+    return c ? g_model.DefaultEventOf(c) : std::wstring(L"Load");
+}
+
+// sağ tık bağlam menüsü — Sil her koşulda erişilebilir
+static void ShowContextMenu(HWND surf, int sx, int sy) {
+    Ctrl* c = HitControl(surf, sx, sy);
+    if (!c) c = HitTray(surf, sx, sy);
+    if (c) {
+        g_model.selected = c; g_model.formSelected = false;
+        NotifySelChanged(); InvalidateRect(surf, nullptr, FALSE);
+    }
+    bool hasSel = g_model.selected != nullptr;
+    HMENU m = CreatePopupMenu();
+    if (hasSel) {
+        std::wstring label = EvNameOf(g_model.selected) + L" işleyicisi oluştur";
+        AppendMenuW(m, MF_STRING, 9001, label.c_str());
+        AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    }
+    AppendMenuW(m, MF_STRING | (hasSel ? 0 : MF_GRAYED), M2CMD_CUT, L"Kes\tCtrl+X");
+    AppendMenuW(m, MF_STRING | (hasSel ? 0 : MF_GRAYED), M2CMD_COPY, L"Kopyala\tCtrl+C");
+    AppendMenuW(m, MF_STRING, M2CMD_PASTE, L"Yapıştır\tCtrl+V");
+    AppendMenuW(m, MF_STRING | (hasSel ? 0 : MF_GRAYED), M2CMD_DELETE, L"Sil\tDel");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING | (hasSel ? 0 : MF_GRAYED), M2CMD_FRONT, L"Öne Getir\tCtrl+T");
+    AppendMenuW(m, MF_STRING | (hasSel ? 0 : MF_GRAYED), M2CMD_BACK, L"Arkaya Gönder\tCtrl+B");
+    POINT pt = { sx, sy };
+    ClientToScreen(surf, &pt);
+    SetForegroundWindow(g_hMain);
+    int cmd = TrackPopupMenu(m, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, pt.x, pt.y, 0, surf, nullptr);
+    DestroyMenu(m);
+    if (cmd == 9001 && g_model.selected) {
+        PostMessageW(g_hMain, MWM_EVENT_DBLCLICK, (WPARAM)g_model.selected, (LPARAM)_wcsdup(EvNameOf(g_model.selected).c_str()));
+    } else if (cmd) {
+        PostMessageW(g_hMain, WM_COMMAND, MAKEWPARAM(cmd, 0), 0);
+    }
+}
+
+// ===PART3===
 
 LRESULT CALLBACK SurfaceProc(HWND surf, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
@@ -361,25 +520,44 @@ LRESULT CALLBACK SurfaceProc(HWND surf, UINT msg, WPARAM wp, LPARAM lp) {
         if (GetKeyState(VK_SHIFT) & 0x8000) DoScroll(surf, d, 0); else DoScroll(surf, 0, d);
         return 0;
     }
+    case WM_SETCURSOR: {
+        if (LOWORD(lp) == HTCLIENT) {
+            if (!toolbox::ArmedType().empty()) {
+                SetCursor(LoadCursor(nullptr, IDC_CROSS));   // VS: yerleştirme imleci
+                return TRUE;
+            }
+        }
+        break;   // alttaki WM_MOUSEMOVE imleç mantığına bırak
+    }
     case WM_LBUTTONDOWN: {
         SetFocus(surf);
         POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        s_lastCursor = pt;
+        // 1) araç kutusundan tıkla-yerleştir modu
+        std::wstring armed = toolbox::ArmedType();
+        if (!armed.empty()) {
+            toolbox::Disarm();
+            PlaceNew(surf, armed, pt.x, pt.y);
+            Status(L"Hazır");
+            return 0;
+        }
+        // 2) tutamaç (boyutlandırma)
         int hIdx = HitHandle(surf, pt.x, pt.y);
         if (hIdx >= 0 && g_model.selected) {
             g_model.PushUndo();
             s_drag = g_model.selected; s_dragMode = 2; s_handle = hIdx;
             s_start = pt; s_started = false;
-            RECT cr = ClientAreaRect(surf);
             s_startRect = { s_drag->x, s_drag->y, s_drag->x + s_drag->w, s_drag->y + s_drag->h };
             SetCapture(surf);
             return 0;
         }
+        // 3) kontrol seç + taşı (parent-child duyarlı: üstteki kontrol kazanır)
         Ctrl* c = HitControl(surf, pt.x, pt.y);
         if (!c) c = HitTray(surf, pt.x, pt.y);
         if (c) {
             if (g_model.selected != c) {
                 g_model.selected = c; g_model.formSelected = false;
-                NotifySelChanged(); InvalidateRect(surf, nullptr, FALSE);
+                NotifySelChanged(); RepaintAll(surf);
             }
             g_model.PushUndo();
             s_drag = c; s_dragMode = 1; s_start = pt; s_started = false;
@@ -388,14 +566,15 @@ LRESULT CALLBACK SurfaceProc(HWND surf, UINT msg, WPARAM wp, LPARAM lp) {
         } else {
             if (!g_model.formSelected) {
                 g_model.selected = nullptr; g_model.formSelected = true;
-                NotifySelChanged(); InvalidateRect(surf, nullptr, FALSE);
+                NotifySelChanged(); RepaintAll(surf);
             }
         }
         return 0;
     }
     case WM_MOUSEMOVE: {
+        POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        s_lastCursor = pt;
         if (s_drag && (wp & MK_LBUTTON)) {
-            POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
             if (!s_started) {
                 int ddx = abs(pt.x - s_start.x), ddy = abs(pt.y - s_start.y);
                 if (ddx > 2 || ddy > 2) s_started = true;
@@ -404,32 +583,47 @@ LRESULT CALLBACK SurfaceProc(HWND surf, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         // imleç
-        POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-        int h = HitHandle(surf, pt.x, pt.y);
         LPWSTR cur = IDC_ARROW;
-        if (h == 0 || h == 4) cur = IDC_SIZENWSE;
-        else if (h == 2 || h == 6) cur = IDC_SIZENESW;
-        else if (h == 3 || h == 7) cur = IDC_SIZEWE;
-        else if (h == 1 || h == 5) cur = IDC_SIZENS;
-        else if (HitControl(surf, pt.x, pt.y) || HitTray(surf, pt.x, pt.y)) cur = IDC_SIZEALL;
+        std::wstring armed = toolbox::ArmedType();
+        if (armed.empty()) {
+            int h = HitHandle(surf, pt.x, pt.y);
+            if (h == 0 || h == 4) cur = IDC_SIZENWSE;
+            else if (h == 2 || h == 6) cur = IDC_SIZENESW;
+            else if (h == 3 || h == 7) cur = IDC_SIZEWE;
+            else if (h == 1 || h == 5) cur = IDC_SIZENS;
+            else if (HitControl(surf, pt.x, pt.y) || HitTray(surf, pt.x, pt.y)) cur = IDC_SIZEALL;
+        }
         SetCursor(LoadCursor(nullptr, cur));
-        // durum çubuğu: fare form koordinatı
+        // durum çubuğu
         int fx, fy; ScreenToForm(surf, pt.x, pt.y, &fx, &fy);
-        wchar_t b[96];
-        if (g_model.selected && !g_model.formSelected) {
+        wchar_t b[128];
+        if (!armed.empty()) swprintf(b, 128, L"%s yerleştirmek için tıkla — ESC iptal", armed.c_str());
+        else if (g_model.selected && !g_model.formSelected) {
             Ctrl* c = g_model.selected;
-            swprintf(b, 96, L"Konum: %d, %d   Boyut: %d × %d   [%s]", fx, fy, c->w, c->h, c->name.c_str());
-        } else swprintf(b, 96, L"Konum: %d, %d", fx, fy);
+            swprintf(b, 128, L"Konum: %d, %d   Boyut: %d × %d   [%s]", fx, fy, c->w, c->h, c->name.c_str());
+        } else swprintf(b, 128, L"Konum: %d, %d", fx, fy);
         Status(b);
         return 0;
     }
     case WM_LBUTTONUP: {
         if (s_drag) {
+            Ctrl* dragged = s_drag;          // reparent için yakala
+            int mode = s_dragMode;
             ReleaseCapture();
             s_drag = nullptr; s_dragMode = 0;
-            InvalidateRect(surf, nullptr, FALSE);
-            PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0);
+            if (mode == 2) {
+                InvalidateRect(surf, nullptr, FALSE);
+                PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0);
+            } else {
+                // hayalet pikselleri tamamen temizle (tüm çocuklarla)
+                RedrawWindow(surf, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+                FinishDragReparent(surf, dragged);
+            }
         }
+        return 0;
+    }
+    case WM_CAPTURECHANGED: {
+        s_drag = nullptr; s_dragMode = 0;
         return 0;
     }
     case WM_LBUTTONDBLCLK: {
@@ -437,12 +631,24 @@ LRESULT CALLBACK SurfaceProc(HWND surf, UINT msg, WPARAM wp, LPARAM lp) {
         Ctrl* c = HitControl(surf, pt.x, pt.y);
         bool isForm = false;
         if (!c) c = HitTray(surf, pt.x, pt.y);
-        if (!c && g_model.formSelected) isForm = true;
+        if (!c) isForm = true;   // boş alan: form çift tıkı (Load)
         if (c || isForm) {
             std::wstring ev = isForm ? std::wstring(L"Load") : g_model.DefaultEventOf(c);
             wchar_t* heap = _wcsdup(ev.c_str());
             PostMessageW(g_hMain, MWM_EVENT_DBLCLICK, (WPARAM)c, (LPARAM)heap);
         }
+        return 0;
+    }
+    case WM_RBUTTONUP:
+        return DefWindowProcW(surf, msg, wp, lp);   // DefWindowProc WM_CONTEXTMENU üretir
+    case WM_CONTEXTMENU: {
+        // imleç yüzeyin üzerinde mi?
+        HWND from = (HWND)wp;
+        if (from != surf && from != nullptr) break;
+        POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (lp == -1) { pt.x = pt.y = 0; ClientToScreen(surf, &pt); }
+        else ScreenToClient(surf, &pt);
+        ShowContextMenu(surf, pt.x, pt.y);
         return 0;
     }
     case WM_KEYDOWN: {
@@ -451,21 +657,17 @@ LRESULT CALLBACK SurfaceProc(HWND surf, UINT msg, WPARAM wp, LPARAM lp) {
         bool ctrl = GetKeyState(VK_CONTROL) & 0x8000;
         int step = s_gridSnap ? GRID_SIZE : 1;
         if (wp == VK_ESCAPE) {
+            if (!toolbox::ArmedType().empty()) { toolbox::Disarm(); Status(L"Yerleştirme iptal edildi"); return 0; }
             g_model.selected = nullptr; g_model.formSelected = true;
             NotifySelChanged(); InvalidateRect(surf, nullptr, FALSE); return 0;
         }
-        if (!c) {
-            if (wp == 'V' && ctrl) { PostMessageW(g_hMain, WM_COMMAND, 2103, 0); return 0; } // yapıştır
-            if (wp == 'V' && ctrl == FALSE) return 0;
-            return 0;
-        }
-        if (wp == VK_DELETE) { PostMessageW(g_hMain, WM_COMMAND, 2104, 0); return 0; }
+        if (wp == VK_DELETE) { PostMessageW(g_hMain, WM_COMMAND, MAKEWPARAM(M2CMD_DELETE, 0), 0); return 0; }
         if (wp == 'Z' && ctrl) { g_model.Undo(); RecreateAll(surf); NotifySelChanged(); InvalidateRect(surf, nullptr, TRUE); PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0); return 0; }
         if (wp == 'Y' && ctrl) { g_model.Redo(); RecreateAll(surf); NotifySelChanged(); InvalidateRect(surf, nullptr, TRUE); PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0); return 0; }
-        if (wp == 'C' && ctrl) { PostMessageW(g_hMain, WM_COMMAND, 2102, 0); return 0; }
-        if (wp == 'X' && ctrl) { PostMessageW(g_hMain, WM_COMMAND, 2101, 0); return 0; }
-        if (wp == 'V' && ctrl) { PostMessageW(g_hMain, WM_COMMAND, 2103, 0); return 0; }
-        if (c->nonVisual) return 0;
+        if (wp == 'C' && ctrl) { PostMessageW(g_hMain, WM_COMMAND, MAKEWPARAM(M2CMD_COPY, 0), 0); return 0; }
+        if (wp == 'X' && ctrl) { PostMessageW(g_hMain, WM_COMMAND, MAKEWPARAM(M2CMD_CUT, 0), 0); return 0; }
+        if (wp == 'V' && ctrl) { PostMessageW(g_hMain, WM_COMMAND, MAKEWPARAM(M2CMD_PASTE, 0), 0); return 0; }
+        if (!c || c->nonVisual) return 0;
         int dx = 0, dy = 0, dw = 0, dh = 0;
         switch (wp) {
         case VK_LEFT:  if (shift) dw = -step; else dx = -step; break;
@@ -478,8 +680,13 @@ LRESULT CALLBACK SurfaceProc(HWND surf, UINT msg, WPARAM wp, LPARAM lp) {
         if (s_gridSnap && dx == 0 && dy == 0) { dw = ((dw + GRID_SIZE / 2) / GRID_SIZE) * GRID_SIZE; dh = ((dh + GRID_SIZE / 2) / GRID_SIZE) * GRID_SIZE; }
         c->x = max(0, c->x + dx); c->y = max(0, c->y + dy);
         c->w = max(8, c->w + dw); c->h = max(8, c->h + dh);
-        RECT cr = ClientAreaRect(surf);
-        SetWindowPos(c->hwnd, nullptr, cr.left + c->x, cr.top + c->y, c->w, c->h, SWP_NOZORDER | SWP_NOACTIVATE);
+        if (c->parent) {
+            int x0, y0, x1, y1;
+            ContainerChildArea(c->parent, x0, y0, x1, y1);
+            c->x = max(x0, min(c->x, max(x0, x1 - c->w)));
+            c->y = max(y0, min(c->y, max(y0, y1 - c->h)));
+        }
+        PositionOne(surf, c);
         wchar_t b1[64], b2[64];
         swprintf(b1, 64, L"%d, %d", c->x, c->y); swprintf(b2, 64, L"%d, %d", c->w, c->h);
         c->props[L"Location"] = b1; c->props[L"Size"] = b2;
@@ -489,14 +696,13 @@ LRESULT CALLBACK SurfaceProc(HWND surf, UINT msg, WPARAM wp, LPARAM lp) {
     }
     case WM_CTLCOLORSTATIC:
     case WM_CTLCOLOREDIT: {
-        // CreateWindowExW sırasında da gelir: önce id ile ara (hwnd henüz modelde olmayabilir)
-        Ctrl* c = g_model.FindByCid((UINT)GetDlgCtrlID((HWND)lp));
-        if (!c) c = g_model.FindByHwnd((HWND)lp);
-        if (!c) break;
+        Ctrl* cc = g_model.FindByCid((UINT)GetDlgCtrlID((HWND)lp));
+        if (!cc) cc = g_model.FindByHwnd((HWND)lp);
+        if (!cc) break;
         HDC dc = (HDC)wp;
         COLORREF fg, bg;
-        if (!ParseColor(c->Get(L"ForeColor", L"ControlText"), fg)) fg = RGB(0, 0, 0);
-        if (!ParseColor(c->Get(L"BackColor", L"Control"), bg)) bg = GetSysColor(COLOR_BTNFACE);
+        if (!ParseColor(cc->Get(L"ForeColor", L"ControlText"), fg)) fg = RGB(0, 0, 0);
+        if (!ParseColor(cc->Get(L"BackColor", L"Control"), bg)) bg = GetSysColor(COLOR_BTNFACE);
         SetTextColor(dc, fg);
         SetBkColor(dc, bg);
         SetBkMode(dc, OPAQUE);
@@ -514,6 +720,8 @@ LRESULT CALLBACK SurfaceProc(HWND surf, UINT msg, WPARAM wp, LPARAM lp) {
     }
     return DefWindowProcW(surf, msg, wp, lp);
 }
+
+// ===PART4===
 
 HWND Create(HWND parent) {
     static bool reg = false;
@@ -534,38 +742,43 @@ HWND Create(HWND parent) {
 }
 
 void SubclassForDesign(HWND h) {
+    // fare mesajlarını tasarım yüzeyine aktar (HTTRANSPARENT zincirlenir:
+    // konteyner çocuğu → konteyner → yüzey)
     SetWindowSubclass(h, [](HWND hh, UINT m, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR) -> LRESULT {
         if (m == WM_NCHITTEST) return HTTRANSPARENT;
         return DefSubclassProc(hh, m, w, l);
     }, 1, 0);
 }
 
+// kontrolleri parent zincirine göre oluştur (önce konteyner, sonra çocukları)
+static void CreateBranch(HWND surf, Ctrl* c) {
+    if (c->nonVisual) return;
+    factory::CreateOnSurface(surf, c);
+    for (auto* k : g_model.ChildrenOf(c)) CreateBranch(surf, k);
+}
+
 void LayoutAll(HWND surf) {
-    RECT cr = ClientAreaRect(surf);
-    for (auto* c : g_model.ctrls) {
-        if (!c->hwnd) continue;
-        SetWindowPos(c->hwnd, nullptr, cr.left + c->x, cr.top + c->y, c->w, c->h,
-                     SWP_NOZORDER | SWP_NOACTIVATE);
-    }
+    for (auto* c : g_model.ctrls) PositionOne(surf, c);
     UpdateScroll(surf);
 }
 
 void PositionOne(HWND surf, Ctrl* c) {
     if (!c || !c->hwnd) return;
-    RECT cr = ClientAreaRect(surf);
-    SetWindowPos(c->hwnd, nullptr, cr.left + c->x, cr.top + c->y, c->w, c->h,
-                 SWP_NOZORDER | SWP_NOACTIVATE);
+    if (c->parent && c->parent->hwnd) {
+        // konteyner çocuğu: konteyner client koordinatı
+        SetWindowPos(c->hwnd, nullptr, c->x, c->y, c->w, c->h, SWP_NOZORDER | SWP_NOACTIVATE);
+    } else {
+        RECT cr = ClientAreaRect(surf);
+        SetWindowPos(c->hwnd, nullptr, cr.left + c->x, cr.top + c->y, c->w, c->h, SWP_NOZORDER | SWP_NOACTIVATE);
+    }
 }
 
 void RecreateAll(HWND surf) {
     for (auto* c : g_model.ctrls) {
         if (c->hwnd) { DestroyWindow(c->hwnd); c->hwnd = nullptr; }
     }
-    // z-sırası: arkadan öne
-    for (auto* c : g_model.ctrls) {
-        if (c->nonVisual) continue;
-        factory::CreateOnSurface(surf, c);
-    }
+    // z-sırası kurallı: önce parent'lar; aynı parent içinde oluşturma sırası (son = üstte)
+    for (auto* c : g_model.ChildrenOf(nullptr)) CreateBranch(surf, c);
     LayoutAll(surf);
     InvalidateRect(surf, nullptr, TRUE);
 }
@@ -577,4 +790,3 @@ void RefreshSelection(HWND surf) {
 void NotifySelection() { NotifySelChanged(); }
 
 } // namespace surface
-

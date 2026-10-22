@@ -17,7 +17,8 @@ std::wstring IdMacroOf(const std::wstring& ctrlName) {
 }
 
 
-// kontrol için CreateWindowExW çağrısı bloğu
+// kontrol için CreateWindowExW çağrısı bloğu (PARENT-AWARE:
+// konteyner çocuğu konteynerin hwnd değişkenine yaratılır, koordinatlar zaten parent-görelisi)
 static std::wstring EmitCreateCall(const Ctrl* c) {
     factory::Win32Class m = factory::MapClass(c->type);
     std::wostringstream o;
@@ -36,11 +37,14 @@ static std::wstring EmitCreateCall(const Ctrl* c) {
     // metin kaçışı
     std::wstring esc = ReplaceAll(txt, L"\\", L"\\\\");
     esc = ReplaceAll(esc, L"\"", L"\\\"");
+    std::wstring parentVar = c->parent ? c->parent->name : std::wstring(L"hWnd");
+    if (c->parent)
+        o << L"    // " << c->name << L" → " << c->parent->name << L" içine (child)\n";
     o << L"    " << c->name << L" = CreateWindowExW(" << ex << L", L\"" << m.cls << L"\", L\"" << esc << L"\",\n";
     std::wstring styleExpr = m.styleText.empty() ? std::wstring(L"0") : m.styleText;
     styleExpr += L" | WS_CHILD | WS_VISIBLE | WS_TABSTOP";
     o << L"        " << styleExpr << L", " << c->x << L", " << c->y << L", " << c->w << L", " << c->h << L",\n";
-    o << L"        hWnd, (HMENU)(INT_PTR)" << IdMacroOf(c->name) << L", hInst, NULL);\n";
+    o << L"        " << parentVar << L", (HMENU)(INT_PTR)" << IdMacroOf(c->name) << L", hInst, NULL);\n";
     o << L"    SendMessageW(" << c->name << L", WM_SETFONT, (WPARAM)hFont, TRUE);\n";
     // renk / font özellik notları
     if (c->props.count(L"Font") && c->Get(L"Font") != L"Segoe UI, 9pt")
@@ -58,7 +62,7 @@ static std::wstring EmitCreateCall(const Ctrl* c) {
 
 std::wstring GenerateForm1Cpp() {
     std::wostringstream o;
-    o << L"// Form1.cpp — M2GodWin32 UI Designer (Faz 2.0) tarafından üretilmiştir.\n";
+    o << L"// Form1.cpp — M2GodWin32 UI Designer (Faz 2.1) tarafından üretilmiştir.\n";
     o << L"// Marker blokları (//== M2GOD:... ) tasarımcı senkronizasyonu içindir; dışını düzenleyebilirsiniz.\n\n";
     o << L"#include \"Form1.h\"\n";
     o << L"#include <commctrl.h>\n\n";
@@ -82,12 +86,20 @@ std::wstring GenerateForm1Cpp() {
         o << L"HWND " << c->name << L" = NULL;\n";
     }
     o << L"//== M2GOD:HANDLES-END\n\n";
-    // CREATE
+    // CREATE — parent-sıralı: konteyner önce, alt kontroller sonra (aynı parent içinde
+    // oluşturma sırası korunur; böylece HWND z-sırası tasarımla birebir aynıdır)
     o << L"//== M2GOD:CREATE-BEGIN\n";
     o << L"void InitializeControls(HWND hWnd) {\n";
     o << L"    HINSTANCE hInst = GetModuleHandleW(NULL);\n";
     o << L"    EnsureStatics(hInst);\n";
-    for (auto* c : g_model.ctrls) o << EmitCreateCall(c) << L"\n";
+    std::function<void(Ctrl*)> emitBranch = [&](Ctrl* parent) {
+        for (auto* c : g_model.ChildrenOf(parent)) {
+            o << EmitCreateCall(c) << L"\n";
+            emitBranch(c);
+        }
+    };
+    emitBranch(nullptr);
+    for (auto* c : g_model.ctrls) if (c->nonVisual) o << EmitCreateCall(c) << L"\n";
     o << L"}\n";
     o << L"//== M2GOD:CREATE-END\n\n";
     // EVENTS — bağlı her olay için TODO stub'ı üret
@@ -188,7 +200,7 @@ std::wstring GenerateForm1Cpp() {
 
 std::wstring GenerateForm1H() {
     std::wostringstream o;
-    o << L"// Form1.h — M2GodWin32 UI Designer (Faz 2.0) tarafından üretilmiştir.\n";
+    o << L"// Form1.h — M2GodWin32 UI Designer (Faz 2.1) tarafından üretilmiştir.\n";
     o << L"#pragma once\n";
     o << L"#include <windows.h>\n\n";
     o << L"namespace M2GodForm {\n\n";

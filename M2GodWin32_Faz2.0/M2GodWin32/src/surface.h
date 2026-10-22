@@ -30,4 +30,8 @@ void SubclassForDesign(HWND h);
 // Seçimi yenile (özellik paneli değişiklikleri sonrası)
 void RefreshSelection(HWND surf);
 
+// Araç kutusundan yeni kontrol yerleştir (bırakma VE tıkla-yerleştir ortak yolu).
+// sx,sy: yüzey client koordinatı; hedef konteyner varsa otomatik içine alınır.
+void PlaceNew(HWND surf, const std::wstring& type, int sx, int sy);
+
 } // namespace surface

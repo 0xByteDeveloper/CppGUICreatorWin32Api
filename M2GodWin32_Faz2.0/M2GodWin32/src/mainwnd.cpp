@@ -21,7 +21,7 @@ enum {
     CMD_CUT = 2101, CMD_COPY, CMD_PASTE, CMD_DELETE, CMD_UNDO, CMD_REDO, CMD_FRONT, CMD_BACK,
     CMD_VIEW_TB = 2201, CMD_VIEW_PROPS, CMD_VIEW_GRID, CMD_VIEW_STATUS,
     CMD_VS_CONNECT = 2301, CMD_VS_DISCONNECT, CMD_VS_SYNC, CMD_VS_OPENFOLDER,
-    CMD_ABOUT = 2401,
+    CMD_ABOUT = 2401, CMD_ESC_CANCEL = 2150,
 };
 
 static HWND s_wnd = nullptr, s_toolbar = nullptr, s_status = nullptr;
@@ -29,6 +29,7 @@ static HWND s_toolbox = nullptr, s_props = nullptr, s_surface = nullptr;
 static std::wstring s_file;            // .m2god proje dosyası
 static Ctrl* s_clipboard = nullptr;
 static bool s_showToolbox = true, s_showProps = true, s_showGrid = true, s_showStatus = true;
+static std::wstring pendingOpen;   // giriş ekranından gelecek .m2god/.cpp yolu
 
 // --- ortak diyalog pencere sınıfı ---------------------------------------------
 static void EnsureDialogClass() {
@@ -36,10 +37,12 @@ static void EnsureDialogClass() {
     if (reg) return;
     WNDCLASSW wc = { 0 };
     wc.lpfnWndProc = DefWindowProcW;
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);   // siyah arka plan olmasın
     wc.lpszClassName = L"M2GOD_CODEDLG";
     RegisterClassW(&wc);
     reg = true;
 }
+static void RunModal(HWND dlg, HWND parent);   // ileri bildirim (modal pompa)
 
 // --- diyalog: kod önizleme ---------------------------------------------------
 static void ShowCodePreview(HWND parent) {
@@ -113,105 +116,279 @@ static void ShowCodePreview(HWND parent) {
     }));
     SetPropW(dlg, L"m2ctx", (HANDLE)&ctx);
     fill(dlg, edit, which);
+    RunModal(dlg, parent);   // MODAL: stack ctx güvenli
 }
 
 // ===PART2===
 
-// --- diyalog: VS'ye bağlan ----------------------------------------------------
+// --- ortak modal pompa (sahipsiz diyaloglar için) --------------------------------
+// NOT: stack'te veri + modal-olmayan diyalog = dangling pointer çökmesi (eski hata).
+// ctx artık HEAP'te tutulur ve diyalog bu pompa ile MODAL çalışır.
+static void RunModal(HWND dlg, HWND parent) {
+    if (parent) EnableWindow(parent, FALSE);
+    ShowWindow(dlg, SW_SHOWNORMAL);
+    UpdateWindow(dlg);
+    MSG msg;
+    while (GetMessageW(&msg, nullptr, 0, 0)) {
+        if (msg.message == WM_QUIT) { PostQuitMessage((int)msg.wParam); break; }
+        if (!IsDialogMessageW(dlg, &msg)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
+        if (!IsWindow(dlg)) break;
+    }
+    if (parent) { EnableWindow(parent, TRUE); SetForegroundWindow(parent); SetFocus(parent); }
+}
+
+// VS örneğinin satır metni: "PID 1234 | Çözüm: Foo | Proje: Bar.vcxproj | DTE ✓"
+static std::wstring InstLine(const vsint::VSInstance& i) {
+    wchar_t buf[768];
+    std::wstring proj;
+    if (!i.projects.empty()) proj = GetFileName(i.projects[0]);
+    else if (!i.projectName.empty()) proj = i.projectName;
+    std::wstring dte = i.hasDte ? L"DTE ✓" : L"pencere";
+    swprintf(buf, 768, L"PID %lu  |  %s  |  %s  |  %s",
+             (unsigned long)i.pid,
+             i.solutionName.empty() ? L"(çözüm yok)" : i.solutionName.c_str(),
+             proj.empty() ? L"-" : proj.c_str(),
+             dte.c_str());
+    return buf;
+}
+
+// örnek + proje seçimi (çok projetli çözümde popup menü) → connect → dosyaları hazırla
+static bool DoConnectInstance(HWND h, const vsint::VSInstance& inst) {
+    std::wstring projPath;
+    if (!inst.projects.empty()) {
+        if (inst.projects.size() == 1) projPath = inst.projects[0];
+        else {
+            HMENU m = CreatePopupMenu();
+            for (size_t i = 0; i < inst.projects.size(); i++)
+                AppendMenuW(m, MF_STRING, (UINT)(i + 1), GetFileName(inst.projects[i]).c_str());
+            POINT pt; GetCursorPos(&pt);
+            int cmd = TrackPopupMenu(m, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, pt.x, pt.y, 0, h, nullptr);
+            DestroyMenu(m);
+            if (cmd >= 1 && cmd <= (int)inst.projects.size()) projPath = inst.projects[cmd - 1];
+            else return false;
+        }
+    }
+    if (projPath.empty()) {
+        // çözüm bulunamadı — kullanıcıdan .vcxproj seçmesini iste
+        wchar_t file[MAX_PATH] = L"";
+        OPENFILENAMEW ofn = { sizeof(ofn) };
+        ofn.hwndOwner = h;
+        ofn.lpstrFile = file; ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrTitle = L"Proje dosyasını (.vcxproj) seçin";
+        ofn.Flags = OFN_FILEMUSTEXIST | OFN_EXPLORER;
+        ofn.lpstrFilter = L"Visual C++ Projesi\0*.vcxproj\0Tüm dosyalar\0*.*\0";
+        if (GetOpenFileNameW(&ofn)) projPath = GetFileDir(file);
+        else return false;
+    }
+    vsint::Connect(const_cast<vsint::VSInstance&>(inst), projPath);
+    vsint::PrepareProjectFiles();   // Form1.h / Form1.cpp + vcxproj
+    vsint::SyncToProject(nullptr, L"", nullptr);
+    Status(L"Bağlandı: " + inst.solutionName + L" — " + GetFileName(projPath));
+    return true;
+}
+
+// --- diyalog: VS'ye bağlan (modal + heap ctx — çökme düzeltildi) ------------------
 static void ShowConnectDialog(HWND parent) {
     EnsureDialogClass();
     auto instances = vsint::Enumerate();
-    // basit modal diyalog
     HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"M2GOD_CODEDLG",
         L"Visual Studio'ya Bağlan", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-        320, 220, 560, 340, parent, nullptr, g_hInst, nullptr);
+        320, 220, 620, 380, parent, nullptr, g_hInst, nullptr);
     SetWindowLongW(dlg, GWL_STYLE, (GetWindowLongW(dlg, GWL_STYLE) & ~WS_MAXIMIZEBOX) | WS_CAPTION);
+    HWND hint = CreateWindowExW(0, L"STATIC",
+        L"Çalışan Visual Studio örnekleri (devenv.exe):", WS_CHILD | WS_VISIBLE,
+        10, 8, 580, 20, dlg, nullptr, g_hInst, nullptr);
+    SendMessageW(hint, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
     HWND lb = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
         WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_HASSTRINGS,
-        10, 10, 524, 220, dlg, (HMENU)4001, g_hInst, nullptr);
+        10, 32, 588, 210, dlg, (HMENU)4001, g_hInst, nullptr);
     SendMessageW(lb, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
     HWND btnConn = CreateWindowExW(0, L"BUTTON", L"Bağlan",
-        WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 324, 240, 100, 30, dlg, (HMENU)4002, g_hInst, nullptr);
+        WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 384, 296, 100, 30, dlg, (HMENU)4002, g_hInst, nullptr);
+    HWND btnRefresh = CreateWindowExW(0, L"BUTTON", L"Yenile",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 274, 296, 100, 30, dlg, (HMENU)4004, g_hInst, nullptr);
     HWND btnClose = CreateWindowExW(0, L"BUTTON", L"Kapat",
-        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 434, 240, 100, 30, dlg, (HMENU)4003, g_hInst, nullptr);
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 494, 296, 100, 30, dlg, (HMENU)4003, g_hInst, nullptr);
     SendMessageW(btnConn, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
+    SendMessageW(btnRefresh, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
     SendMessageW(btnClose, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
-    std::vector<vsint::VSInstance> insts = instances;
+    // ctx HEAP'te — diyalog kapandığında silinir
+    struct Ctx { std::vector<vsint::VSInstance> insts; HWND lb; }* ctx = new Ctx{ std::move(instances), lb };
     int k = 0;
-    for (auto& i : insts) {
-        wchar_t buf[512];
-        std::wstring dte = i.hasDte ? L"DTE ✓" : L"pencere";
-        swprintf(buf, 512, L"PID %lu  |  VS %s  |  %s  |  %s",
-                 (unsigned long)i.pid,
-                 i.version.empty() ? L"?" : i.version.c_str(),
-                 i.solutionName.c_str(), dte.c_str());
-        SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)buf);
+    for (auto& i : ctx->insts) {
+        SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)InstLine(i).c_str());
         k++;
     }
     if (k == 0) {
-        SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)L"Çalışan Visual Studio örneği bulunamadı.");
+        SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)L"Çalışan Visual Studio örneği bulunamadı (devenv.exe).");
         SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)L"");
-        SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)L"Visual Studio 2019'u açıp bir çözüm yükleyin, sonra");
-        SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)L"bu pencerede Yenilemek için Bağlan'ı tekrar açın.");
+        SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)L"• Visual Studio 2019'u açıp bir çözüm yükleyin;");
+        SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)L"• bu tasarımıcıyı VS ile AYNI ayrıcalık seviyesinde açın");
+        SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)L"  (VS normal ise tasarımıcıyı da normal açın), sonra Yenile.");
     }
-    // ctx
-    struct Ctx { std::vector<vsint::VSInstance>* insts; HWND lb; } *ctx = new Ctx{ &insts, lb };
     SetWindowLongPtrW(dlg, GWLP_USERDATA, (LONG_PTR)ctx);
-    WNDPROC old = (WNDPROC)GetWindowLongPtrW(dlg, GWLP_WNDPROC);
     SetWindowLongPtrW(dlg, GWLP_WNDPROC, (LONG_PTR)(+[](HWND h, UINT m, WPARAM w, LPARAM l) -> LRESULT {
         Ctx* ctx = (Ctx*)GetWindowLongPtrW(h, GWLP_USERDATA);
         switch (m) {
         case WM_COMMAND: {
             int id = LOWORD(w);
             if (id == 4003) { DestroyWindow(h); return 0; }
+            if (id == 4004) {   // Yenile
+                if (ctx) {
+                    ctx->insts = vsint::Enumerate();
+                    SendMessageW(ctx->lb, LB_RESETCONTENT, 0, 0);
+                    for (auto& i : ctx->insts)
+                        SendMessageW(ctx->lb, LB_ADDSTRING, 0, (LPARAM)InstLine(i).c_str());
+                }
+                return 0;
+            }
             if (id == 4002 && ctx) {
                 int sel = (int)SendMessageW(ctx->lb, LB_GETCURSEL, 0, 0);
-                if (sel < 0 || sel >= (int)ctx->insts->size()) {
+                if (sel < 0 || sel >= (int)ctx->insts.size()) {
                     MessageBoxW(h, L"Lütfen listeden bir Visual Studio örneği seçin.", L"Bilgi", MB_OK | MB_ICONINFORMATION);
                     return 0;
                 }
-                vsint::VSInstance inst = (*ctx->insts)[sel];
-                // proje seçimi: çözümdeki ilk vcxproj
-                std::wstring projPath;
-                if (!inst.solutionPath.empty()) {
-                    auto projs = vsint::EnumerateProjectsOfSolution(inst.solutionPath);
-                    if (!projs.empty()) projPath = projs[0];
-                }
-                if (projPath.empty()) {
-                    // klasör seçtir
-                    wchar_t dir[MAX_PATH] = L"";
-                    OPENFILENAMEW ofn = { sizeof(ofn) };
-                    ofn.hwndOwner = h;
-                    ofn.lpstrFile = dir; ofn.nMaxFile = MAX_PATH;
-                    ofn.lpstrTitle = L"Proje klasörünü (.vcxproj'un bulunduğu) seçin";
-                    ofn.Flags = OFN_FILEMUSTEXIST | OFN_EXPLORER;
-                    ofn.lpstrFilter = L"Visual C++ Projesi\0*.vcxproj\0Tüm dosyalar\0*.*\0";
-                    if (GetOpenFileNameW(&ofn)) projPath = GetFileDir(dir);
-                }
-                if (!projPath.empty()) {
-                    vsint::Connect(inst, projPath);
-                    vsint::SyncToProject(nullptr, L"", nullptr);
-                    Status(L"Bağlandı: " + inst.solutionName + L" (" + GetFileName(projPath) + L")");
-                    MessageBoxW(h, (L"Bağlantı kuruldu:\n" + projPath + L"\n\nArtık Form1.h / Form1.cpp bu projede güncellenecek.\n"
-                        L"Nesneye çift tıkladığınızda handler VS'de açılır.").c_str(),
-                        L"M2GodWin32", MB_OK | MB_ICONINFORMATION);
+                vsint::VSInstance inst = ctx->insts[sel];   // kopya (dte ref+1; Dikkat: orijinalin dte'sini sıfırla)
+                ctx->insts[sel].dte = nullptr;              // çift Release yok
+                if (DoConnectInstance(h, inst))
                     DestroyWindow(h);
-                }
             }
             return 0;
         }
         case WM_SIZE: {
             RECT rc; GetClientRect(h, &rc);
-            MoveWindow(GetDlgItem(h, 4001), 10, 10, rc.right - 20, rc.bottom - 80, TRUE);
-            MoveWindow(GetDlgItem(h, 4002), rc.right - 216, rc.bottom - 60, 100, 30, TRUE);
-            MoveWindow(GetDlgItem(h, 4003), rc.right - 110, rc.bottom - 60, 100, 30, TRUE);
+            MoveWindow(GetDlgItem(h, 4001), 10, 32, rc.right - 20, rc.bottom - 112, TRUE);
+            MoveWindow(GetDlgItem(h, 4002), rc.right - 326, rc.bottom - 52, 100, 30, TRUE);
+            MoveWindow(GetDlgItem(h, 4004), rc.right - 216, rc.bottom - 52, 100, 30, TRUE);
+            MoveWindow(GetDlgItem(h, 4003), rc.right - 110, rc.bottom - 52, 100, 30, TRUE);
             return 0;
         }
-        case WM_DESTROY: delete ctx; return 0;
+        case WM_DESTROY: {
+            if (ctx) {
+                for (auto& i : ctx->insts) if (i.dte) { i.dte->Release(); i.dte = nullptr; }
+                delete ctx;
+                ctx = nullptr;
+            }
+            return 0;
+        }
         }
         return DefWindowProcW(h, m, w, l);
     }));
-    (void)old;
+    RunModal(dlg, parent);
+}
+
+// --- giriş ekranı: ÖNCE VS seçimi, sonra sıfır form -------------------------------
+// Sonuç: 1 = VS'ye bağlanıldı (sıfır form), 2 = .m2god açıldı, 0 = VS'siz boş form
+static std::wstring g_welcomeOpenPath;
+static int g_welcomeResult = 0;
+
+static int ShowWelcomeDialog(std::wstring& openPath) {
+    EnsureDialogClass();
+    int result = 0;
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"M2GOD_CODEDLG",
+        L"M2GodWin32 Faz 2.1 — Başlangıç", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        360, 200, 640, 420, nullptr, nullptr, g_hInst, nullptr);
+    SetWindowLongW(dlg, GWL_STYLE, (GetWindowLongW(dlg, GWL_STYLE) & ~WS_MAXIMIZEBOX) | WS_CAPTION);
+    HWND hint = CreateWindowExW(0, L"STATIC",
+        L"1) Çalışan Visual Studio seçin ve bağlanın — Form1.h/Form1.cpp o projede oluşturulur:",
+        WS_CHILD | WS_VISIBLE, 12, 10, 600, 20, dlg, nullptr, g_hInst, nullptr);
+    SendMessageW(hint, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
+    HWND lb = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
+        WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_HASSTRINGS,
+        12, 34, 604, 150, dlg, (HMENU)5001, g_hInst, nullptr);
+    SendMessageW(lb, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
+    HWND btnRefresh = CreateWindowExW(0, L"BUTTON", L"Yenile",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 12, 192, 96, 28, dlg, (HMENU)5002, g_hInst, nullptr);
+    HWND btnConnect = CreateWindowExW(0, L"BUTTON", L"VS'ye Bağlan ve Sıfır Form Aç",
+        WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 116, 192, 240, 28, dlg, (HMENU)5003, g_hInst, nullptr);
+    HWND sep = CreateWindowExW(0, L"STATIC", L"",
+        WS_CHILD | WS_VISIBLE | SS_ETCHEDHORZ, 12, 234, 604, 4, dlg, nullptr, g_hInst, nullptr);
+    (void)sep;
+    HWND btnOpen = CreateWindowExW(0, L"BUTTON", L"Önceki tasarımı aç (.m2god / .cpp) — eski menü yüklenir",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 12, 246, 480, 28, dlg, (HMENU)5004, g_hInst, nullptr);
+    HWND btnEmpty = CreateWindowExW(0, L"BUTTON", L"VS'siz boş formla devam et",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 12, 282, 480, 28, dlg, (HMENU)5005, g_hInst, nullptr);
+    SendMessageW(btnRefresh, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
+    SendMessageW(btnConnect, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
+    SendMessageW(btnOpen, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
+    SendMessageW(btnEmpty, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
+    // ctx: heap — örnek listesi + sonuç
+    struct Ctx { std::vector<vsint::VSInstance> insts; int result = 0; std::wstring path; }* ctx = new Ctx();
+    auto fillList = [&](Ctx* c) {
+        SendMessageW(lb, LB_RESETCONTENT, 0, 0);
+        for (auto& i : c->insts)
+            SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)InstLine(i).c_str());
+        if (c->insts.empty()) {
+            SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)L"(Çalışan Visual Studio bulunamadı — devenv.exe)");
+            SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)L"Aşağıdaki seçeneklerle devam edebilirsiniz.");
+        }
+    };
+    ctx->insts = vsint::Enumerate();
+    fillList(ctx);
+    SetWindowLongPtrW(dlg, GWLP_USERDATA, (LONG_PTR)ctx);
+    SetWindowLongPtrW(dlg, GWLP_WNDPROC, (LONG_PTR)(+[](HWND h, UINT m, WPARAM w, LPARAM l) -> LRESULT {
+        Ctx* ctx = (Ctx*)GetWindowLongPtrW(h, GWLP_USERDATA);
+        switch (m) {
+        case WM_COMMAND: {
+            int id = LOWORD(w);
+            if (id == 5002 && ctx) {   // Yenile
+                for (auto& i : ctx->insts) if (i.dte) { i.dte->Release(); i.dte = nullptr; }
+                ctx->insts = vsint::Enumerate();
+                // listeyi yeniden doldur
+                HWND lb = GetDlgItem(h, 5001);
+                SendMessageW(lb, LB_RESETCONTENT, 0, 0);
+                for (auto& i : ctx->insts)
+                    SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)InstLine(i).c_str());
+                if (ctx->insts.empty()) {
+                    SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)L"(Çalışan Visual Studio bulunamadı — devenv.exe)");
+                    SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)L"Aşağıdaki seçeneklerle devam edebilirsiniz.");
+                }
+                return 0;
+            }
+            if (id == 5003 && ctx) {   // VS'ye bağlan
+                int sel = (int)SendMessageW(GetDlgItem(h, 5001), LB_GETCURSEL, 0, 0);
+                if (sel < 0 || sel >= (int)ctx->insts.size()) {
+                    MessageBoxW(h, L"Lütfen listeden bir Visual Studio örneği seçin (yoksa 'VS'siz devam et').",
+                        L"Bilgi", MB_OK | MB_ICONINFORMATION);
+                    return 0;
+                }
+                vsint::VSInstance inst = ctx->insts[sel];
+                ctx->insts[sel].dte = nullptr;   // sahiplik kopyaya geçti
+                for (auto& i : ctx->insts) if (i.dte) { i.dte->Release(); i.dte = nullptr; }
+                if (DoConnectInstance(h, inst)) { ctx->result = 1; DestroyWindow(h); }
+                return 0;
+            }
+            if (id == 5004 && ctx) {   // önceki tasarımı aç
+                wchar_t file[MAX_PATH] = L"";
+                OPENFILENAMEW ofn = { sizeof(ofn) };
+                ofn.hwndOwner = h;
+                ofn.lpstrFile = file; ofn.nMaxFile = MAX_PATH;
+                ofn.lpstrFilter = L"M2God Tasarım (*.m2god)\0*.m2god\0Üretilmiş Kod (*.cpp)\0*.cpp\0Tüm dosyalar\0*.*\0";
+                ofn.Flags = OFN_FILEMUSTEXIST | OFN_EXPLORER;
+                if (GetOpenFileNameW(&ofn)) { ctx->result = 2; ctx->path = file; DestroyWindow(h); }
+                return 0;
+            }
+            if (id == 5005) { ctx->result = 0; DestroyWindow(h); return 0; }   // boş form
+            return 0;
+        }
+        case WM_CLOSE: { if (ctx) { ctx->result = 0; ctx->path.clear(); } DestroyWindow(h); return 0; }
+        case WM_DESTROY: {
+            // sonuçları dışarı taşı
+            if (ctx) {
+                g_welcomeResult = ctx->result;
+                g_welcomeOpenPath = ctx->path;
+                for (auto& i : ctx->insts) if (i.dte) { i.dte->Release(); i.dte = nullptr; }
+                delete ctx;
+            }
+            return 0;
+        }
+        }
+        return DefWindowProcW(h, m, w, l);
+    }));
+    RunModal(dlg, nullptr);
+    result = g_welcomeResult;
+    openPath = g_welcomeOpenPath;
+    return result;
 }
 
 // --- toolbar -------------------------------------------------------------------
@@ -520,6 +697,14 @@ static LRESULT CALLBACK FrameProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             }
             return 0;
         case CMD_DELETE:
+            // odak bir metin düzenleyicideyse silme (öz. panelinde yazarken yanlışlıkla)
+            {
+                HWND foc = GetFocus();
+                wchar_t cls[32] = L"";
+                if (foc) GetClassNameW(foc, cls, 32);
+                if (!wcscmp(cls, L"EDIT") || !wcscmp(cls, L"COMBOBOX") || !wcscmp(cls, L"RichEdit20W"))
+                    return 0;
+            }
             if (g_model.selected) {
                 g_model.PushUndo();
                 g_model.Delete(g_model.selected);
@@ -541,6 +726,13 @@ static LRESULT CALLBACK FrameProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         case CMD_VIEW_STATUS: s_showStatus = !s_showStatus; ShowWindow(s_status, s_showStatus); DoLayout(h); return 0;
         case CMD_VIEW_GRID: s_showGrid = !s_showGrid; InvalidateRect(s_surface, nullptr, TRUE); return 0;
         case CMD_VS_CONNECT: ShowConnectDialog(h); return 0;
+        case CMD_ESC_CANCEL:
+            if (!toolbox::ArmedType().empty()) {
+                toolbox::Disarm();
+                Status(L"Yerleştirme iptal edildi (ESC)");
+                InvalidateRect(s_surface, nullptr, FALSE);
+            }
+            return 0;
         case CMD_VS_DISCONNECT: vsint::Disconnect(); return 0;
         case CMD_VS_SYNC: props::ApplyPending(s_props); vsint::SyncToProject(nullptr, L"", nullptr); return 0;
         case CMD_VS_OPENFOLDER:
@@ -548,12 +740,15 @@ static LRESULT CALLBACK FrameProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             return 0;
         case CMD_ABOUT:
             MessageBoxW(h,
-                L"M2GodWin32 — Faz 2.0 God Mode MVP\n\n"
+                L"M2GodWin32 — Faz 2.1 God Mode MVP\n\n"
                 L"Win32 API Görsel Form Tasarımcısı\n"
                 L"• Config_info.json kataloğu ile tüm .NET elemanları\n"
-                L"• Sürükle-bırak, seç, taşı, boyutlandır, özellik/olay düzenle\n"
+                L"• Sürükle-bırak VE tıkla-yerleştir (ESC = iptal)\n"
+                L"• Konteyner desteği: Panel/GroupBox/TabControl içine bırakma\n"
+                L"• Oluşturma sırası = z-sırası (son eklenen üstte)\n"
+                L"• Araç kutusu arama + sağ tık menü\n"
                 L"• Form1.h / Form1.cpp marker'lı üretim + VS2019 entegrasyonu\n"
-                L"• Çift tıkla → handler VS'de açılır ve satıra gidilir\n\n"
+                L"• Yönetici modu uyumlu devenv.exe taraması (PID + çözüm + proje adı)\n\n"
                 L"Visual Studio 2019 C++ Win32 API projesi",
                 L"Hakkında", MB_OK | MB_ICONINFORMATION);
             return 0;
@@ -566,13 +761,15 @@ static LRESULT CALLBACK FrameProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case MWM_MODEL_CHANGED:
         g_modelDirty = true;
         {
-            std::wstring t = L"M2GodWin32 Faz 2.0";
+            std::wstring t = L"M2GodWin32 Faz 2.1";
             if (!s_file.empty()) t += L" — " + GetFileName(s_file) + (g_modelDirty ? L" *" : L"");
             SetWindowTextW(h, t.c_str());
         }
         return 0;
     case MWM_PROPS_APPLIED:
-        props::Refresh(s_props);
+        // SÜRÜKLEME SIRASINDA: tüm liste yeniden kurulmaz (flicker yok) —
+        // sadece Location/Size satır değerleri güncellenir
+        props::UpdateLiveGeometry();
         return 0;
     case MWM_EVENT_DBLCLICK: {
         Ctrl* c = (Ctrl*)w;
@@ -613,8 +810,9 @@ static HACCEL MakeAccel() {
         { FCONTROL | FSHIFT | FVIRTKEY, 'V', CMD_VS_CONNECT },
         { FCONTROL | FVIRTKEY, 'T', CMD_FRONT },
         { FCONTROL | FVIRTKEY, 'B', CMD_BACK },
+        { FVIRTKEY, VK_ESCAPE, CMD_ESC_CANCEL },   // tıkla-yerleştir iptali her odakta çalışsın
     };
-    return CreateAcceleratorTableW(a, 15);
+    return CreateAcceleratorTableW(a, 16);
 }
 
 namespace mainwnd {
@@ -645,15 +843,31 @@ int Run(HINSTANCE hInst, LPWSTR cmdLine) {
     wc.lpszClassName = L"M2GOD_MAIN";
     wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(1));
     RegisterClassW(&wc);
-    HWND h = CreateWindowExW(0, L"M2GOD_MAIN", L"M2GodWin32 Faz 2.0 — God Mode MVP",
+    HWND h = CreateWindowExW(0, L"M2GOD_MAIN", L"M2GodWin32 Faz 2.1 — God Mode MVP",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         8, 8, 1424, 856, nullptr, nullptr, hInst, nullptr);
     g_hMain = h;
     // katalog → toolbox
     toolbox::Refresh(s_toolbox);
-    // demo tasarım (--demo veya çift tıkla başlatma) — her durumda demo ile aç
-    LoadDemo();
+    // --- GİRİŞ EKRANI: önce VS seçimi, sonra sıfır form -------------------------
+    // (--demo verilirse eski demo tasarım yüklenir — geliştirici modu)
+    bool demoMode = (cmdLine && wcsstr(cmdLine, L"--demo") != nullptr);
+    std::wstring openPath;
+    if (!demoMode) {
+        int wr = ShowWelcomeDialog(openPath);
+        if (wr == 2 && !openPath.empty()) {
+            // eski tasarım yüklenecek (menü/form birlikte)
+            s_file = Lower(openPath).rfind(L".cpp") != std::wstring::npos ? L"" : openPath;
+            pendingOpen = openPath;
+        }
+    } else {
+        LoadDemo();
+    }
     surface::RecreateAll(s_surface);
+    if (!pendingOpen.empty()) {
+        DoLoadFile(h, pendingOpen);   // seçilen tasarım ana pencerede açılır
+        pendingOpen.clear();
+    }
     props::Refresh(s_props);
     PostMessageW(h, MWM_MODEL_CHANGED, 0, 0);
     Status(fromConfig
@@ -663,10 +877,23 @@ int Run(HINSTANCE hInst, LPWSTR cmdLine) {
     HACCEL acc = MakeAccel();
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0)) {
-        if (!TranslateAcceleratorW(h, acc, &msg)) {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+        // odak bir metin düzenleyicideyse Ctrl+C/X/V ve Delete hızlandırıcılarını YUTMA —
+        // edit kontrolü kendi davranışını yürütsün (kopyala/yapıştır bozulmasın)
+        bool skipAccel = false;
+        if (msg.message == WM_KEYDOWN) {
+            HWND foc = GetFocus();
+            wchar_t cls[32] = L"";
+            if (foc) GetClassNameW(foc, cls, 32);
+            if (!wcscmp(cls, L"EDIT") || !wcscmp(cls, L"COMBOBOX") || !wcscmp(cls, L"RichEdit20W")) {
+                UINT vk = (UINT)msg.wParam;
+                bool ctrlKey = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+                if (vk == VK_DELETE || vk == VK_BACK || (ctrlKey && (vk == 'C' || vk == 'X' || vk == 'V' || vk == 'Z' || vk == 'Y')))
+                    skipAccel = true;
+            }
         }
+        if (!skipAccel && TranslateAcceleratorW(h, acc, &msg)) continue;
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
     }
     DestroyAcceleratorTable(acc);
     CoUninitialize();
