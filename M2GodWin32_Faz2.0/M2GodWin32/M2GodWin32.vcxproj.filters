@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Kaynak Dosyalar">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx</Extensions>
+    </Filter>
+    <Filter Include="Başlık Dosyaları">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx</Extensions>
+    </Filter>
+    <Filter Include="Kaynak Dosyaları (rc)">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;manifest</Extensions>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\main.cpp"><Filter>Kaynak Dosyalar</Filter></ClCompile>
+    <ClCompile Include="src\utils.cpp"><Filter>Kaynak Dosyalar</Filter></ClCompile>
+    <ClCompile Include="src\json.cpp"><Filter>Kaynak Dosyalar</Filter></ClCompile>
+    <ClCompile Include="src\catalog.cpp"><Filter>Kaynak Dosyalar</Filter></ClCompile>
+    <ClCompile Include="src\model.cpp"><Filter>Kaynak Dosyalar</Filter></ClCompile>
+    <ClCompile Include="src\factory.cpp"><Filter>Kaynak Dosyalar</Filter></ClCompile>
+    <ClCompile Include="src\surface.cpp"><Filter>Kaynak Dosyalar</Filter></ClCompile>
+    <ClCompile Include="src\toolbox.cpp"><Filter>Kaynak Dosyalar</Filter></ClCompile>
+    <ClCompile Include="src\props.cpp"><Filter>Kaynak Dosyalar</Filter></ClCompile>
+    <ClCompile Include="src\codegen.cpp"><Filter>Kaynak Dosyalar</Filter></ClCompile>
+    <ClCompile Include="src\vsint.cpp"><Filter>Kaynak Dosyalar</Filter></ClCompile>
+    <ClCompile Include="src\mainwnd.cpp"><Filter>Kaynak Dosyalar</Filter></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\app.h"><Filter>Başlık Dosyaları</Filter></ClInclude>
+    <ClInclude Include="src\json.h"><Filter>Başlık Dosyaları</Filter></ClInclude>
+    <ClInclude Include="src\catalog.h"><Filter>Başlık Dosyaları</Filter></ClInclude>
+    <ClInclude Include="src\model.h"><Filter>Başlık Dosyaları</Filter></ClInclude>
+    <ClInclude Include="src\factory.h"><Filter>Başlık Dosyaları</Filter></ClInclude>
+    <ClInclude Include="src\surface.h"><Filter>Başlık Dosyaları</Filter></ClInclude>
+    <ClInclude Include="src\toolbox.h"><Filter>Başlık Dosyaları</Filter></ClInclude>
+    <ClInclude Include="src\props.h"><Filter>Başlık Dosyaları</Filter></ClInclude>
+    <ClInclude Include="src\codegen.h"><Filter>Başlık Dosyaları</Filter></ClInclude>
+    <ClInclude Include="src\vsint.h"><Filter>Başlık Dosyaları</Filter></ClInclude>
+    <ClInclude Include="src\mainwnd.h"><Filter>Başlık Dosyaları</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="build\app.rc"><Filter>Kaynak Dosyaları (rc)</Filter></ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="build\app.manifest"><Filter>Kaynak Dosyaları (rc)</Filter></None>
+    <None Include="build\app.ico"><Filter>Kaynak Dosyaları (rc)</Filter></None>
+  </ItemGroup>
+</Project>
