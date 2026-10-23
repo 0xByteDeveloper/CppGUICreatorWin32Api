@@ -1,14 +1,28 @@
-# M2GodWin32 — Faz 2.3 God Mode MVP
+# M2GodWin32 — Faz 2.5.1 God Mode MVP
 
 **Visual Studio 2019 C++ CLR Form Designer deneyimini Win32 API ile yaşatan, tam kapsamlı görsel UI tasarım ortamı.**
 
-> Bu proje `CppGUICreatorWin32Api` deposunun **Faz 2.3** geliştirme aşamasıdır.
+> Bu proje `CppGUICreatorWin32Api` deposunun **Faz 2.5.1** geliştirme aşamasıdır.
 > Katalog kaynağı olarak depodaki **Config_info.json** (.NET Framework WinForms tam eleman kataloğu: 144 eleman, tüm property'ler + event'ler + 203 enum) kullanılır.
 
 
 ---
 
-## Faz 2.5 — TAM KAPSAMLI M2God SDK (Global.h v2500)
+## Faz 2.5.1 — VS2019 VARSAYILAN (C++14) uyumluluk düzeltmesi
+
+Kullanıcı geri bildirimi: v2500 Global.h, VS2019'un **varsayılan** proje ayarı olan **/std:c++14**'te derlenmiyordu:
+
+| Hata | Sebep | Çözüm (v2501) |
+|------|-------|----------------|
+| **C2864 / C7525 / E2860** (`M2God::Form::*`) | `inline static` üyeler C++17 gerektirir | `Form`, **sınıf şablonu tekniğine** taşındı: `template<typename D> struct FormBase` + `using Form = FormBase<void>` — statik üye tanımları şablon oldukları için header-only kalır, **sözdizimi değişmez** (`M2God::Form::Handle`, `M2God::Form::Text = ...`) |
+| **C4996** (`wcsncpy`, 5 satır) | Güvensiz CRT uyarısı (hata olarak) | `M2God::M2StrNCpy` yardımcısı: aynı davranış, sıfır uyarı, ek tanım gerekmez |
+| **E0245** (IntelliSense, diyalog satırları) | inline static'in ardındaki zincir hata | FormBase tekniğiyle kendiliğinden temizlendi |
+
+**Doğrulama:** Üretilen proje (17 kontrol + 4 bileşen) `x86_64 g++ -std=c++14` ile **0 hata 0 uyarı** derlendi; wine altında çalıştırıldı: `timer1->Enabled=false` ile sayaç **Tick 98'de kalıcı durdu**, buton "Durduruldu" + gri oldu. `/std:c++17` ile de aynı sonuç. **Proje ayarı değiştirmeye gerek yok** — tasarımcı bir sonraki Senkron'da (F7) Global.h'ı otomatik v2501'e yükseltir (olay gövdeleri korunur).
+
+---
+
+## Faz 2.5 — TAM KAPSAMLI M2God SDK (Global.h v2501)
 
 Config_info.json'daki **tüm** toolbox elemanları artık üretilen projede nesne sözdizimiyle kullanılabiliyor. Global.h ~3200 satırlık header-only SDK:
 

@@ -72,11 +72,11 @@ static std::wstring M2ComponentTypeOf(const std::wstring& type) {
     return L"";
 }
 
-const char* GlobalVersionMark() { return "M2GOD-GLOBAL v2500"; }
+const char* GlobalVersionMark() { return "M2GOD-GLOBAL v2501"; }
 
 // ============================================================================
 //  Global.h şablonu — M2God TAM KAPSAMLI SDK (Faz 2.5)
-//  Şablon ayrı dosyada: src/global_template.inc (M2GOD-GLOBAL v2500)
+//  Şablon ayrı dosyada: src/global_template.inc (M2GOD-GLOBAL v2501, C++14 uyumlu)
 //  Config_info.json'daki tüm kontroller/bileşenler/diyaloglar + enumlar + Color
 // ============================================================================
 std::wstring GenerateGlobalH() {
@@ -527,7 +527,7 @@ std::wstring GenerateForm1Cpp() {
     std::wostringstream o;
     o << L"// Form1.cpp — M2GodWin32 UI Designer (Faz 2.5) tarafından üretilmiştir.\n";
     o << L"// Nesne sözdizimi için Global.h: timer1->Enabled = false; button1->Text = L\"...\";\n";
-    o << L"// Kapsam: tüm kontroller + bileşenler + diyaloglar (M2God SDK v2500)\n";
+    o << L"// Kapsam: tüm kontroller + bileşenler + diyaloglar (M2God SDK v2501, C++14 uyumlu)\n";
     o << L"// Marker blokları (//== M2GOD:... ) tasarımcı senkronizasyonu içindir; dışını düzenleyebilirsiniz.\n\n";
     o << L"#include \"Form1.h\"\n";
     o << L"#include <commctrl.h>\n\n";

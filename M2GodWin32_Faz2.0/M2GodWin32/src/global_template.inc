@@ -1,6 +1,6 @@
 R"M2GODGLOBAL(// ============================================================================
-//  Global.h — M2GodWin32 UI Designer (Faz 2.5) TAM KAPSAMLI nesne kutuphanesi
-//  M2GOD-GLOBAL v2500
+//  Global.h — M2GodWin32 UI Designer (Faz 2.5.1) TAM KAPSAMLI nesne kutuphanesi
+//  M2GOD-GLOBAL v2501
 //  !! BU DOSYAYI DUZENLEMEYIN — tasarimci gerektiginde gunceller.
 //  Amac: Form1 olay kodlarinda WinForms benzeri sozdizimi (saf Win32 uzerinde):
 //      timer1->Enabled = false;                  // Timer durdurur
@@ -13,7 +13,9 @@ R"M2GODGLOBAL(// ===============================================================
 //      comboBox1->DropDownStyle = M2God::ComboBoxStyle::DropDownList;
 //      if (openFileDialog1->ShowDialog() == M2God::DialogResult::OK) ...
 //  HWND gerekirse: button1->Handle   (ya da dogrudan SendMessage(button1, ...))
-//  Derleme: VS2019 C++17 (/std:c++17) — ek kutuphane gerekmez (header-only)
+//  Derleme: VS2019 VARSAYILAN ayar (C++14) ile sorunsuz derlenir — /std:c++17
+//  seciliyken de aynen calisir. Ek kutuphane gerekmez (header-only).
+//  Not: proje ayariyla oynamaniza gerek yok — bu dosya C++14 ile uyumludur.
 //  Kapsam: Config_info.json'daki tum toolbox kontrolleri, bilesenler ve
 //          diyaloglar; her kontrol icin tasarimci panelindeki ozellikler.
 // ============================================================================
@@ -52,6 +54,17 @@ template <typename T, typename = typename std::enable_if<std::is_class<T>::value
 inline std::wstring operator+(const T& b, const wchar_t* a) { return (std::wstring)b + a; }
 template <typename T, typename = typename std::enable_if<std::is_class<T>::value && !std::is_same<T, std::wstring>::value && std::is_convertible<const T&, std::wstring>::value>::type>
 inline std::wstring operator+(const std::wstring& a, const T& b) { return a + (std::wstring)b; }
+
+// ---------------------------------------------------------------------------
+//  wcsncpy muadili — C4996 (güvensiz CRT) uyarisi ÜRETMEDEN ayni davranis:
+//  kaynagi n karaktere kadar kopyala, kisa kaynakta kalan alan null doldur
+// ---------------------------------------------------------------------------
+inline void M2StrNCpy(wchar_t* dst, const wchar_t* src, size_t n) {
+    if (!dst || n == 0) return;
+    size_t i = 0;
+    if (src) { for (; i < n && src[i]; ++i) dst[i] = src[i]; }
+    for (; i < n; ++i) dst[i] = 0;
+}
 
 // ---------------------------------------------------------------------------
 //  Color — M2God::Color::Red gibi sabitler + FromArgb
@@ -522,9 +535,13 @@ inline bool& InitDone() { static bool d = false; return d; }
 
 // ============================================================================
 //  Form — statik form API'si (M2God::Form::Handle uretilen koda atanir)
+//  C++14 uyumlu: "inline static" yerine SINIF-SABLONU tekniği kullaniliyor
+//  (VS2019 varsayilan /std:c++14 ayarinda derlenir; /std:c++17'de de aynen
+//   calisir). Sozdizimi degismedi: M2God::Form::Handle, M2God::Form::Text ...
 // ============================================================================
-struct Form {
-    inline static HWND Handle = nullptr;   // wWinMain/WM_CREATE icinde atanir
+template<typename D>
+struct FormBase {
+    static HWND Handle;                    // wWinMain/WM_CREATE icinde atanir
 
     struct TextP {
         void operator=(const std::wstring& s) { if (Handle) SetWindowTextW(Handle, s.c_str()); }
@@ -536,7 +553,8 @@ struct Form {
             GetWindowTextW(Handle, buf.data(), n + 1);
             return std::wstring(buf.data());
         }
-    } inline static Text{};
+    };
+    static TextP Text;
     struct ClientSizeP {
         void operator=(const Size& s) {
             if (!Handle) return;
@@ -551,7 +569,8 @@ struct Form {
             RECT rc; GetClientRect(Handle, &rc);
             return Size(rc.right - rc.left, rc.bottom - rc.top);
         }
-    } inline static ClientSize{};
+    };
+    static ClientSizeP ClientSize;
     struct BackColorP {
         void operator=(COLORREF c) {
             if (!Handle) return;
@@ -561,11 +580,13 @@ struct Form {
             InvalidateRect(Handle, nullptr, TRUE);
         }
         operator COLORREF() const { return CtrlColorInfo(Handle).back; }
-    } inline static BackColor{};
+    };
+    static BackColorP BackColor;
     struct ForeColorP {
         void operator=(COLORREF c) { CtrlColorInfo(Handle).fore = c; if (Handle) InvalidateRect(Handle, nullptr, TRUE); }
         operator COLORREF() const { return CtrlColorInfo(Handle).fore; }
-    } inline static ForeColor{};
+    };
+    static ForeColorP ForeColor;
     struct TopMostP {
         void operator=(bool v) {
             if (Handle) SetWindowPos(Handle, v ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -573,7 +594,8 @@ struct Form {
         operator bool() const {
             return Handle && (GetWindowLongPtrW(Handle, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
         }
-    } inline static TopMost{};
+    };
+    static TopMostP TopMost;
     struct OpacityP {   // 0-100 (100 = tam opak)
         void operator=(int pct) {
             if (!Handle) return;
@@ -582,7 +604,8 @@ struct Form {
             SetWindowLongPtrW(Handle, GWL_EXSTYLE, ex | WS_EX_LAYERED);
             SetLayeredWindowAttributes(Handle, 0, (BYTE)(pct < 0 ? 0 : pct > 100 ? 255 : pct * 255 / 100), LWA_ALPHA);
         }
-    } inline static Opacity{};
+    };
+    static OpacityP Opacity;
     struct WindowStateP {
         void operator=(FormWindowState ws) {
             if (!Handle) return;
@@ -595,18 +618,22 @@ struct Form {
             if (IsZoomed(Handle)) return FormWindowState::Maximized;
             return FormWindowState::Normal;
         }
-    } inline static WindowState{};
+    };
+    static WindowStateP WindowState;
     struct MaximizeBoxP {
         void operator=(bool v) { if (Handle) RestyleWindow(Handle, v ? WS_MAXIMIZEBOX : 0, v ? 0 : WS_MAXIMIZEBOX); }
         operator bool() const { return Handle && (GetWindowLongPtrW(Handle, GWL_STYLE) & WS_MAXIMIZEBOX) != 0; }
-    } inline static MaximizeBox{};
+    };
+    static MaximizeBoxP MaximizeBox;
     struct MinimizeBoxP {
         void operator=(bool v) { if (Handle) RestyleWindow(Handle, v ? WS_MINIMIZEBOX : 0, v ? 0 : WS_MINIMIZEBOX); }
         operator bool() const { return Handle && (GetWindowLongPtrW(Handle, GWL_STYLE) & WS_MINIMIZEBOX) != 0; }
-    } inline static MinimizeBox{};
+    };
+    static MinimizeBoxP MinimizeBox;
     struct ControlBoxP {
         void operator=(bool v) { if (Handle) RestyleWindow(Handle, v ? WS_SYSMENU : 0, v ? 0 : WS_SYSMENU); }
-    } inline static ControlBox{};
+    };
+    static ControlBoxP ControlBox;
     struct FormBorderStyleP {
         void operator=(M2God::FormBorderStyle b) {
             if (!Handle) return;
@@ -622,7 +649,8 @@ struct Form {
             }
             RestyleWindow(Handle, add, rem);
         }
-    } inline static FormBorderStyle{};
+    };
+    static FormBorderStyleP FormBorderStyle;
 
     static void Close()    { if (Handle) PostMessageW(Handle, WM_CLOSE, 0, 0); }
     static void Activate() { if (Handle) { SetForegroundWindow(Handle); SetActiveWindow(Handle); } }
@@ -637,6 +665,24 @@ struct Form {
             0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
 };
+
+// Statik üye tanımlari — sinif sablonu üyesi olduklari icin header'da
+// tanimlanabilirler (C++14 uyumlu; ODR guvenli: tek varlik)
+template<typename D> HWND FormBase<D>::Handle = nullptr;
+template<typename D> typename FormBase<D>::TextP FormBase<D>::Text{};
+template<typename D> typename FormBase<D>::ClientSizeP FormBase<D>::ClientSize{};
+template<typename D> typename FormBase<D>::BackColorP FormBase<D>::BackColor{};
+template<typename D> typename FormBase<D>::ForeColorP FormBase<D>::ForeColor{};
+template<typename D> typename FormBase<D>::TopMostP FormBase<D>::TopMost{};
+template<typename D> typename FormBase<D>::OpacityP FormBase<D>::Opacity{};
+template<typename D> typename FormBase<D>::WindowStateP FormBase<D>::WindowState{};
+template<typename D> typename FormBase<D>::MaximizeBoxP FormBase<D>::MaximizeBox{};
+template<typename D> typename FormBase<D>::MinimizeBoxP FormBase<D>::MinimizeBox{};
+template<typename D> typename FormBase<D>::ControlBoxP FormBase<D>::ControlBox{};
+template<typename D> typename FormBase<D>::FormBorderStyleP FormBase<D>::FormBorderStyle{};
+
+// Form — sablon parametresi sabitlenmis takma ad (sozdizimi: M2God::Form::X)
+using Form = FormBase<void>;
 
 // ============================================================================
 //  Button
@@ -2737,7 +2783,7 @@ public:
     public:
         explicit TextProp(NotifyIcon* o) : c(o) {}
         TextProp& operator=(const std::wstring& s) {
-            wcsncpy(c->nid.szTip, s.c_str(), 63);
+            M2StrNCpy(c->nid.szTip, s.c_str(), 63);
             c->nid.szTip[63] = 0;
             if (c->Added) Shell_NotifyIconW(NIM_MODIFY, &c->nid);
             return *this;
@@ -2757,8 +2803,8 @@ public:
     } Visible{ this };
     void ShowBalloonTip(int timeoutMs = 500) {
         nid.uFlags |= NIF_INFO;
-        wcsncpy(nid.szInfo, BalloonTipText.c_str(), 255); nid.szInfo[255] = 0;
-        wcsncpy(nid.szInfoTitle, BalloonTipTitle.c_str(), 63); nid.szInfoTitle[63] = 0;
+        M2StrNCpy(nid.szInfo, BalloonTipText.c_str(), 255); nid.szInfo[255] = 0;
+        M2StrNCpy(nid.szInfoTitle, BalloonTipTitle.c_str(), 63); nid.szInfoTitle[63] = 0;
         nid.uTimeout = (UINT)timeoutMs;
         nid.dwInfoFlags = NIIF_INFO;
         Shell_NotifyIconW(NIM_MODIFY, &nid);
@@ -3017,7 +3063,7 @@ public:
 
     void PrepBuf() {
         bufFile.assign(32768, 0);
-        if (!FileName.empty()) wcsncpy(bufFile.data(), FileName.c_str(), 32767);
+        if (!FileName.empty()) M2StrNCpy(bufFile.data(), FileName.c_str(), 32767);
     }
     void PrepFilter(std::vector<wchar_t>& f) {
         f.assign(Filter.begin(), Filter.end());
@@ -3121,7 +3167,7 @@ public:
         HDC dc = GetDC(nullptr);
         lf.lfHeight = -MulDiv(FontSize_, GetDeviceCaps(dc, LOGPIXELSY), 72);
         ReleaseDC(nullptr, dc);
-        wcsncpy(lf.lfFaceName, FontName_.c_str(), 31);
+        M2StrNCpy(lf.lfFaceName, FontName_.c_str(), 31);
         lf.lfWeight = Bold ? FW_BOLD : FW_NORMAL;
         lf.lfItalic = Italic ? TRUE : FALSE;
         lf.lfUnderline = Underline ? TRUE : FALSE;
