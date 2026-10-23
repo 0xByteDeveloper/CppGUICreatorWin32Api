@@ -25,6 +25,9 @@ struct Ctrl {
 
 // Konteyner tipleri: içine kontrol bırakılabilir
 bool IsContainerType(const std::wstring& type);
+// FAZ 2.6 — TabControl sayfaları (Tip==TabPage çocuk Ctrl'ler) + Text senkronu
+std::vector<Ctrl*> TabPagesOf(const Ctrl* tab);
+void SyncTabText(Ctrl* tab);
 
 class Model {
 public:
@@ -54,7 +57,9 @@ public:
 
     // --- kontroller --------------------------------------------------------
     std::wstring UniqueName(const std::wstring& type);   // "button3"
-    Ctrl* Add(const std::wstring& type, int x, int y, Ctrl* parent = nullptr);  // varsayılan boyut/props ile
+    Ctrl* Add(const std::wstring& type, int x, int y, Ctrl* parent = nullptr, bool autoPages = true);  // varsayılan boyut/props ile
+    Ctrl* AddPage(Ctrl* tab, const std::wstring& title);    // FAZ 2.6: TabControl'e sayfa ekle (VS "Sekme Ekle")
+    bool  RemovePage(Ctrl* tab, Ctrl* page);                // FAZ 2.6: sayfayı çocuklarıyla kaldır
     void  Delete(Ctrl* c);                                // alt kontrollerle birlikte siler
     Ctrl* Clone(Ctrl* src, int dx, int dy);
     Ctrl* FindByName(const std::wstring& name);

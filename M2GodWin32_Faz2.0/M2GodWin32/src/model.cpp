@@ -16,6 +16,23 @@ bool IsContainerType(const std::wstring& type) {
     return false;
 }
 
+// FAZ 2.6 — TabControl'ün sayfaları (Tip==TabPage çocukları, listedeki sıra = sekme sırası)
+std::vector<Ctrl*> TabPagesOf(const Ctrl* tab) {
+    std::vector<Ctrl*> out;
+    if (!tab) return out;
+    for (auto* c : g_model.ctrls)
+        if (c->parent == tab && _wcsicmp(c->type.c_str(), L"TabPage") == 0) out.push_back(c);
+    return out;
+}
+// Sayfa başlıklarını TabControl'ün Text özelliğine yaz (geriye dönük uyum + kayıt)
+void SyncTabText(Ctrl* tab) {
+    if (!tab || _wcsicmp(tab->type.c_str(), L"TabControl") != 0) return;
+    std::wstring t;
+    for (auto* p : TabPagesOf(tab)) { if (!t.empty()) t += L"\n"; t += p->Get(L"Text"); }
+    if (t.empty()) t = tab->Get(L"Text");
+    tab->props[L"Text"] = t;
+}
+
 std::vector<Ctrl*> Model::ChildrenOf(Ctrl* p) const {
     std::vector<Ctrl*> out;
     for (auto* c : ctrls) if (c->parent == p) out.push_back(c);
@@ -76,7 +93,7 @@ std::wstring Model::UniqueName(const std::wstring& type) {
     return base + L"_x";
 }
 
-Ctrl* Model::Add(const std::wstring& type, int x, int y, Ctrl* parent) {
+Ctrl* Model::Add(const std::wstring& type, int x, int y, Ctrl* parent, bool autoPages) {
     const ElementDef* def = g_catalog.Find(type);
     if (!def) return nullptr;
     Ctrl* c = new Ctrl();
@@ -105,11 +122,38 @@ Ctrl* Model::Add(const std::wstring& type, int x, int y, Ctrl* parent) {
         else if (!p.def.empty()) c->props[n] = p.def;
     }
     ctrls.push_back(c);
+    // FAZ 2.6: TabControl eklendi → VS gibi otomatik tabPage1 + tabPage2
+    if (_wcsicmp(type.c_str(), L"TabControl") == 0 && autoPages) {
+        AddPage(c, L"tabPage1");
+        AddPage(c, L"tabPage2");
+    }
     return c;
+}
+
+// TabControl'e yeni sayfa (VS "Sekme Ekle"): Ctrl olarak ekler + Text'i senkronlar
+Ctrl* Model::AddPage(Ctrl* tab, const std::wstring& title) {
+    if (!tab || _wcsicmp(tab->type.c_str(), L"TabControl") != 0) return nullptr;
+    Ctrl* pg = Add(L"TabPage", 4, 30, tab, false);
+    if (!pg) return nullptr;
+    if (!title.empty()) pg->props[L"Text"] = title;
+    pg->w = max(10, tab->w - 8);
+    pg->h = max(10, tab->h - 34);
+    SyncTabText(tab);
+    return pg;
+}
+
+// Sayfayı kaldır (VS "Sekme Kaldır") — çocuklarıyla birlikte; kalan sayfa Text'i senkron
+bool Model::RemovePage(Ctrl* tab, Ctrl* page) {
+    if (!tab || !page || page->parent != tab) return false;
+    Delete(page);          // Delete alt kontrolleri de siler
+    SyncTabText(tab);
+    return true;
 }
 
 void Model::Delete(Ctrl* c) {
     if (!c) return;
+    bool wasPage = _wcsicmp(c->type.c_str(), L"TabPage") == 0;
+    Ctrl* par = c->parent;
     // alt kontrolleri de sil (derinlemesine)
     for (auto* k : ChildrenOf(c)) Delete(k);
     if (selected == c || IsAncestorOf(c, selected)) { selected = nullptr; formSelected = true; }
@@ -123,6 +167,8 @@ void Model::Delete(Ctrl* c) {
     for (size_t i = 0; i < ctrls.size(); i++)
         if (ctrls[i] == c) { ctrls.erase(ctrls.begin() + i); break; }
     delete c;
+    // FAZ 2.6: sayfa silindiyse sekme başlık Text'ini senkronla
+    if (wasPage && par) SyncTabText(par);
 }
 
 Ctrl* Model::Clone(Ctrl* src, int dx, int dy) {
@@ -315,6 +361,21 @@ bool Model::FromJson(const json::Value& v) {
             Ctrl* c = FindByName(kv.first);
             Ctrl* p = FindByName(kv.second);
             if (c && p && c != p && !IsAncestorOf(c, p)) c->parent = p;
+        }
+        // FAZ 2.6 MİGRASYON: eski tasarımlarda sayfalar Text satırlarıydı; sayfa
+        // çocuğu yoksa Text satırlarından gerçek TabPage Ctrl'leri üret
+        for (Ctrl* tc : ctrls) {
+            if (_wcsicmp(tc->type.c_str(), L"TabControl") != 0) continue;
+            if (!TabPagesOf(tc).empty()) { SyncTabText(tc); continue; }
+            auto lines = Split(tc->Get(L"Text"), L'\n');
+            std::vector<std::wstring> titles;
+            for (auto& l : lines) { std::wstring t = Trim(l); if (!t.empty()) titles.push_back(t); }
+            if (titles.empty()) titles = { L"tabPage1", L"tabPage2" };
+            for (auto& t : titles) {
+                Ctrl* pg = Add(L"TabPage", 4, 30, tc, false);
+                if (pg) { pg->props[L"Text"] = t; pg->w = max(10, tc->w - 8); pg->h = max(10, tc->h - 34); }
+            }
+            SyncTabText(tc);
         }
     }
     auto cs = Split(formProps.count(L"ClientSize") ? formProps[L"ClientSize"] : L"800, 600", L',');

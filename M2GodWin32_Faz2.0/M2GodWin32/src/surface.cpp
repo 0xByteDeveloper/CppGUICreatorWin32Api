@@ -34,6 +34,9 @@ static Ctrl* HitAt(HWND surf, int sx, int sy, Ctrl* exclude);
 static Ctrl* DropParentAt(HWND surf, int sx, int sy, Ctrl* dragged);
 static void ContainerChildArea(Ctrl* cont, int& x0, int& y0, int& x1, int& y1);
 static RECT ClientAreaRect(HWND surf);
+// FAZ 2.6 ileri bildirimler
+static bool SmartTagRect(HWND surf, Ctrl* c, RECT& out);
+static void DrawSmartTag(HDC dc, HWND surf, Ctrl* c);
 static LRESULT CALLBACK DragLayerProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
     case WM_NCHITTEST: return HTTRANSPARENT;   // fare alttaki yüzeye/ kontrollere gitsin
@@ -206,6 +209,19 @@ static Ctrl* DropParentAt(HWND surf, int sx, int sy, Ctrl* dragged) {
 // lx,ly: parent'in sol üstüne göre (parent=null → form koordinatı)
 static Ctrl* HitInEx(Ctrl* parent, int lx, int ly, Ctrl* exclude) {
     auto kids = g_model.ChildrenOf(parent);
+    // FAZ 2.6: TabControl çocukları arasında SEÇİLİ sayfa en üstte sayılır
+    // (sayfalar aynı dikdörtgende üst üste durur; VS davranışı: görünen sayfa kazanır)
+    if (parent && _wcsicmp(parent->type.c_str(), L"TabControl") == 0) {
+        std::wstring selName = parent->Get(L"SelectedTab");
+        for (int i = (int)kids.size() - 1; i >= 0; i--) {
+            Ctrl* k = kids[i];
+            if (_wcsicmp(k->type.c_str(), L"TabPage") == 0 && _wcsicmp(k->name.c_str(), selName.c_str()) == 0) {
+                kids.erase(kids.begin() + i);
+                kids.push_back(k);
+                break;
+            }
+        }
+    }
     for (int i = (int)kids.size() - 1; i >= 0; i--) {
         Ctrl* k = kids[i];
         if (k == exclude) continue;
@@ -389,7 +405,10 @@ static void DrawSelection(HWND dcH, HDC dc) {
     HBRUSH ob = (HBRUSH)SelectObject(dc, GetStockObject(NULL_BRUSH));
     Rectangle(dc, r.left, r.top, r.right, r.bottom);
     SelectObject(dc, ob); SelectObject(dc, op); DeleteObject(pen);
-    if (!sel->nonVisual) {
+    // FAZ 2.6: TabPage seçiminde boyutlandırma tutamaçları YOK (boyut sekme
+    // görüntü alanına bağlıdır — VS davranışı)
+    bool noHandles = sel->nonVisual || _wcsicmp(sel->type.c_str(), L"TabPage") == 0;
+    if (!noHandles) {
         for (int i = 0; i < 8; i++) {
             RECT hr = HandleRect(r, i);
             HBRUSH wb = CreateSolidBrush(RGB(255, 255, 255));
@@ -425,6 +444,10 @@ static void Paint(HWND surf) {
     // overlay sürükleme sırasında seçim çerçevesini katman çizer (çift çizgi olmasın)
     if (!(s_drag && s_dragMode == 1 && s_started))
         DrawSelection(surf, mem);
+    // FAZ 2.6: seçili TabControl'ün akıllı oku (VS smart tag)
+    if (g_model.selected && !g_model.formSelected &&
+        _wcsicmp(g_model.selected->type.c_str(), L"TabControl") == 0)
+        DrawSmartTag(mem, surf, g_model.selected);
     BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
     SelectObject(mem, ob);
     DeleteObject(bmp); DeleteDC(mem);
@@ -601,6 +624,102 @@ static std::wstring EvNameOf(Ctrl* c) {
     return c ? g_model.DefaultEventOf(c) : std::wstring(L"Load");
 }
 
+// ==================== FAZ 2.6: TabControl akıllı ok + sekme komutları ====================
+
+// VS smart tag: seçili TabControl'ün sağ üst köşesindeki ok dikdörtgeni (yüzey koord)
+static bool SmartTagRect(HWND surf, Ctrl* c, RECT& out) {
+    if (!c || _wcsicmp(c->type.c_str(), L"TabControl") != 0) return false;
+    RECT cs = CtrlRectOnSurface(c, surf);
+    out = { cs.right + 2, cs.top - 17, cs.right + 19, cs.top };
+    return true;
+}
+
+// akıllı oku çiz (Paint'ten çağrılır)
+static void DrawSmartTag(HDC dc, HWND surf, Ctrl* c) {
+    RECT t;
+    if (!SmartTagRect(surf, c, t)) return;
+    HBRUSH wb = CreateSolidBrush(RGB(255, 255, 255));
+    FillRect(dc, &t, wb); DeleteObject(wb);
+    FrameRect(dc, &t, (HBRUSH)GetStockObject(GRAY_BRUSH));
+    // sağa bakan üçgen (VS akıllı etiket oku)
+    int cx = (t.left + t.right) / 2, cy = (t.top + t.bottom) / 2;
+    POINT tri[3] = { { cx - 3, cy - 4 }, { cx - 3, cy + 4 }, { cx + 4, cy } };
+    HBRUSH ab = CreateSolidBrush(RGB(0, 90, 158));
+    HPEN op = (HPEN)SelectObject(dc, GetStockObject(NULL_PEN));
+    HBRUSH ob = (HBRUSH)SelectObject(dc, ab);
+    SetPolyFillMode(dc, WINDING);
+    Polygon(dc, tri, 3);
+    SelectObject(dc, op); SelectObject(dc, ob);
+    DeleteObject(ab);
+}
+
+// sayfa ekle (VS "Sekme Ekle")
+static void TabCmdAdd(HWND surf, Ctrl* tab) {
+    if (!tab) return;
+    g_model.PushUndo();
+    Ctrl* pg = g_model.AddPage(tab, L"");
+    if (!pg) return;
+    pg->props[L"Text"] = pg->name;      // VS: başlık = tabPageN
+    SyncTabText(tab);
+    RecreateAll(surf);
+    factory::SelectTabPage(surf, tab, pg);
+    g_model.selected = pg; g_model.formSelected = false;
+    NotifySelChanged(); RepaintAll(surf);
+    PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0);
+    Status(pg->name + L" eklendi");
+}
+
+// sayfa kaldır (VS "Sekme Kaldır"): seçili sayfa → seçili sekme → son sayfa
+static void TabCmdRemove(HWND surf, Ctrl* tab) {
+    if (!tab) return;
+    auto pages = TabPagesOf(tab);
+    if (pages.empty()) return;
+    Ctrl* victim = nullptr;
+    int victimIdx = (int)pages.size() - 1;
+    if (g_model.selected && g_model.selected->parent == tab &&
+        _wcsicmp(g_model.selected->type.c_str(), L"TabPage") == 0) {
+        victim = g_model.selected;
+    }
+    if (!victim) {
+        std::wstring selName = tab->Get(L"SelectedTab");
+        for (int i = 0; i < (int)pages.size(); i++)
+            if (_wcsicmp(pages[i]->name.c_str(), selName.c_str()) == 0) { victim = pages[i]; victimIdx = i; break; }
+    }
+    if (!victim) { victim = pages.back(); victimIdx = (int)pages.size() - 1; }
+    g_model.PushUndo();
+    g_model.RemovePage(tab, victim);    // victim bu çağrıyla serbest bırakılır
+    RecreateAll(surf);
+    auto rest = TabPagesOf(tab);
+    if (!rest.empty()) {
+        int keep = min(victimIdx, (int)rest.size() - 1);
+        if (keep < 0) keep = 0;
+        factory::SelectTabPage(surf, tab, rest[keep]);
+    }
+    NotifySelChanged(); RepaintAll(surf);
+    PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0);
+    Status(L"Sekme kaldırıldı");
+}
+
+// akıllı ok menüsü: Sekme Ekle / Sekme Kaldır / Sekmeleri Düzenle
+static void ShowTabSmartMenu(HWND surf, Ctrl* tab, const RECT& tag) {
+    HMENU m = CreatePopupMenu();
+    auto pages = TabPagesOf(tab);
+    AppendMenuW(m, MF_STRING, 9101, L"Sekme Ekle");
+    AppendMenuW(m, MF_STRING | (pages.empty() ? MF_GRAYED : 0), 9102, L"Sekme Kaldır");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, 9103, L"Sekmeleri Düzenle...");
+    POINT pt = { tag.right, tag.bottom };
+    ClientToScreen(surf, &pt);
+    SetForegroundWindow(g_hMain);
+    int cmd = TrackPopupMenu(m, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, pt.x, pt.y, 0, surf, nullptr);
+    DestroyMenu(m);
+    switch (cmd) {
+    case 9101: TabCmdAdd(surf, tab); break;
+    case 9102: TabCmdRemove(surf, tab); break;
+    case 9103: PostMessageW(g_hMain, MWM_EDIT_TABPAGES, (WPARAM)tab, 0); break;
+    }
+}
+
 // sağ tık bağlam menüsü — Sil her koşulda erişilebilir
 static void ShowContextMenu(HWND surf, int sx, int sy) {
     Ctrl* c = HitControl(surf, sx, sy);
@@ -682,7 +801,16 @@ LRESULT CALLBACK SurfaceProc(HWND surf, UINT msg, WPARAM wp, LPARAM lp) {
             Status(L"Hazır");
             return 0;
         }
-        // 2) tutamaç (boyutlandırma)
+        // 2) FAZ 2.6: akıllı ok (VS smart tag) — TUTAMAÇTAN ÖNCE (ok, köşe
+        //    tutamacının üstünde çizilir; VS davranışı: akıllı etiket kazanır)
+        if (g_model.selected && _wcsicmp(g_model.selected->type.c_str(), L"TabControl") == 0) {
+            RECT tag;
+            if (SmartTagRect(surf, g_model.selected, tag) && PtInRect(&tag, pt)) {
+                ShowTabSmartMenu(surf, g_model.selected, tag);
+                return 0;
+            }
+        }
+        // 3) tutamaç (boyutlandırma)
         int hIdx = HitHandle(surf, pt.x, pt.y);
         if (hIdx >= 0 && g_model.selected) {
             g_model.PushUndo();
@@ -692,8 +820,24 @@ LRESULT CALLBACK SurfaceProc(HWND surf, UINT msg, WPARAM wp, LPARAM lp) {
             SetCapture(surf);
             return 0;
         }
+        // 2.6) FAZ 2.6: sekme şeridine tıklandı → o sekmeyi (TabPage Ctrl) seç
+        Ctrl* hitPre = HitControl(surf, pt.x, pt.y);
+        if (hitPre && _wcsicmp(hitPre->type.c_str(), L"TabControl") == 0) {
+            int tIdx = factory::TabStripHitIndex(surf, hitPre, pt.x, pt.y);
+            if (tIdx >= 0) {
+                auto pages = TabPagesOf(hitPre);
+                if (tIdx < (int)pages.size()) {
+                    Ctrl* pg = pages[tIdx];
+                    factory::SelectTabPage(surf, hitPre, pg);
+                    g_model.selected = pg; g_model.formSelected = false;
+                    NotifySelChanged(); RepaintAll(surf);
+                    Status(pg->name + L" seçildi (sayfa)");
+                    return 0;
+                }
+            }
+        }
         // 3) kontrol seç + taşı (parent-child duyarlı: üstteki kontrol kazanır)
-        Ctrl* c = HitControl(surf, pt.x, pt.y);
+        Ctrl* c = hitPre;
         if (!c) c = HitTray(surf, pt.x, pt.y);
         if (c) {
             if (g_model.selected != c) {
@@ -960,6 +1104,9 @@ void PositionOne(HWND surf, Ctrl* c) {
         RECT cr = ClientAreaRect(surf);
         SetWindowPos(c->hwnd, nullptr, cr.left + c->x, cr.top + c->y, c->w, c->h, SWP_NOZORDER | SWP_NOACTIVATE);
     }
+    // FAZ 2.6: TabControl taşındı/boyutlandı → sayfa pencerelerini senkronla
+    if (_wcsicmp(c->type.c_str(), L"TabControl") == 0)
+        factory::UpdateTabPages(surf, c);
 }
 
 void RecreateAll(HWND surf) {

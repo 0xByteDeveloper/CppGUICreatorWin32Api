@@ -133,6 +133,13 @@ static void BeginEdit(HWND panel, int row) {
     if (row < 0 || row >= (int)s_rows.size()) return;
     Row& r = s_rows[row];
     if (r.readOnly) return;
+    // FAZ 2.6: TabPages koleksiyon satırı → Koleksiyon Düzenleyici'yi aç
+    // (VS "TabPage Collection Editor" karşılığı)
+    if (_wcsicmp(r.name.c_str(), L"TabPages") == 0) {
+        if (g_model.selected && _wcsicmp(g_model.selected->type.c_str(), L"TabControl") == 0)
+            OpenTabPagesEditor(g_model.selected);
+        return;
+    }
     RECT rc;
     if (!ListView_GetSubItemRect(s_list, row, 1, LVIR_BOUNDS, &rc)) return;
     // GetSubItemRect liste-client koordinatı verir; edit panel'in çocuğu → panele çevir
@@ -345,6 +352,17 @@ static void FillRows() {
         AddPropRow(def, L"Font", c->Get(L"Font", L"Segoe UI, 9pt"), false);
         AddPropRow(def, L"ForeColor", c->Get(L"ForeColor", L"ControlText"), false);
         AddPropRow(def, L"BackColor", c->Get(L"BackColor", L"Control"), false);
+            // FAZ 2.6: TabControl → TabPages koleksiyon satırı (VS: "..." düğmesi)
+            if (_wcsicmp(c->type.c_str(), L"TabControl") == 0) {
+                Row tp;
+                tp.name = L"TabPages";
+                wchar_t pb[80];
+                swprintf(pb, 80, L"<%d sayfa>", (int)TabPagesOf(c).size());
+                tp.value = pb;
+                tp.type = L"System.Windows.Forms.TabControl.TabPageCollection";
+                tp.category = L"Data";
+                s_rows.push_back(tp);
+            }
             // katalogun kalan browsable+canSet özellikleri
             if (def) {
                 for (auto& p : def->props) {
@@ -636,6 +654,302 @@ void UpdateLiveGeometry() {
 void ApplyPending(HWND panel) {
     (void)panel;
     EndEdit(s_panel, true);
+}
+
+// ==================== FAZ 2.6: TabPage Koleksiyon Düzenleyicisi ====================
+// VS "TabPage Collection Editor" karşılığı: sol üye listesi (Ekle/Kaldır/Yukarı/
+// Aşağı), sağda seçili sayfanın özellikleri (Ad, Metin, Arka Plan, Etkin, Araç
+// İpucu). İptal → açılış anındaki model anlık görüntüsüne dönülür.
+namespace tabed {
+
+enum {
+    IDE_LIST   = 3101,
+    IDE_ADD    = 3102,
+    IDE_DEL    = 3103,
+    IDE_UP     = 3104,
+    IDE_DOWN   = 3105,
+    IDE_NAME   = 3106,
+    IDE_TEXT   = 3107,
+    IDE_BACK   = 3108,
+    IDE_BACKBTN= 3109,
+    IDE_ENAB   = 3110,
+    IDE_TIP    = 3111,
+    IDE_OK     = 3112,
+    IDE_CANCEL = 3113,
+};
+
+static Ctrl* s_edTab = nullptr;
+static HWND  s_dlg = nullptr;
+static HWND  s_lb = nullptr, s_eName = nullptr, s_eText = nullptr, s_eBack = nullptr,
+             s_cEnab = nullptr, s_eTip = nullptr;
+static std::vector<Ctrl*> s_pages;
+static int  s_cur = -1;
+static bool s_done = false, s_ok = false;
+static std::string s_snapshot;               // iptal için model anlık görüntüsü
+
+static std::vector<Ctrl*> Pages() { return TabPagesOf(s_edTab); }
+
+static void RefreshSurface() {
+    HWND surf = GetDlgItem(g_hMain, IDC_SURFACE);
+    surface::RecreateAll(surf);
+    factory::UpdateTabPages(surf, s_edTab);
+}
+
+// açık alan düzenlemelerini seçili sayfaya uygula
+static void CommitFields() {
+    if (s_cur < 0 || s_cur >= (int)s_pages.size()) return;
+    Ctrl* pg = s_pages[s_cur];
+    if (!pg) return;
+    wchar_t buf[512] = L"";
+    auto apply = [&](HWND h, const wchar_t* prop, bool trim) {
+        GetWindowTextW(h, buf, 512);
+        std::wstring v = trim ? Trim(buf) : std::wstring(buf);
+        Ctrl* c = g_model.selected;
+        g_model.selected = pg;
+        // ApplyRowValue benzeri: Name özel, diğerleri ApplyProp
+        if (_wcsicmp(prop, L"Name") == 0) {
+            if (!v.empty() && _wcsicmp(v.c_str(), pg->name.c_str()) != 0) {
+                std::wstring nv = v;
+                for (auto& ch : nv) if (!iswalnum(ch) && ch != L'_') ch = L'_';
+                if (!nv.empty() && iswdigit(nv[0])) nv = L"_" + nv;
+                g_model.Rename(pg, nv);
+            }
+        } else if (_wcsicmp(prop, L"Enabled") == 0) {
+            pg->props[L"Enabled"] = v;
+            factory::ApplyProp(pg, L"Enabled", v);
+        } else {
+            pg->props[prop] = v;
+            factory::ApplyProp(pg, prop, v);
+        }
+        g_model.selected = c;
+    };
+    apply(s_eName, L"Name", true);
+    apply(s_eText, L"Text", false);
+    apply(s_eBack, L"BackColor", true);
+    int en = (int)SendMessageW(s_cEnab, CB_GETCURSEL, 0, 0);
+    if (en >= 0) {
+        pg->props[L"Enabled"] = (en == 0) ? L"True" : L"False";
+        factory::ApplyProp(pg, L"Enabled", pg->props[L"Enabled"]);
+    }
+    apply(s_eTip, L"ToolTipText", false);
+    SyncTabText(s_edTab);
+}
+
+static void LoadSel() {
+    if (s_cur < 0 || s_cur >= (int)s_pages.size()) {
+        for (HWND h : { s_eName, s_eText, s_eBack, s_eTip }) { SetWindowTextW(h, L""); EnableWindow(h, FALSE); }
+        EnableWindow(s_cEnab, FALSE);
+        return;
+    }
+    Ctrl* pg = s_pages[s_cur];
+    for (HWND h : { s_eName, s_eText, s_eBack, s_cEnab, s_eTip }) EnableWindow(h, TRUE);
+    SetWindowTextW(s_eName, pg->name.c_str());
+    SetWindowTextW(s_eText, pg->Get(L"Text").c_str());
+    SetWindowTextW(s_eBack, pg->Get(L"BackColor", L"Control").c_str());
+    SendMessageW(s_cEnab, CB_SETCURSEL,
+                 _wcsicmp(pg->Get(L"Enabled", L"True").c_str(), L"true") == 0 ? 0 : 1, 0);
+    SetWindowTextW(s_eTip, pg->Get(L"ToolTipText").c_str());
+}
+
+static void RebuildList(int keepSel) {
+    s_pages = Pages();
+    SendMessageW(s_lb, LB_RESETCONTENT, 0, 0);
+    for (auto* p : s_pages) {
+        std::wstring row = p->name + L"   [" + p->Get(L"Text", L"") + L"]";
+        SendMessageW(s_lb, LB_ADDSTRING, 0, (LPARAM)row.c_str());
+    }
+    int sel = keepSel;
+    if (sel >= (int)s_pages.size()) sel = (int)s_pages.size() - 1;
+    if (sel < 0 && !s_pages.empty()) sel = 0;
+    SendMessageW(s_lb, LB_SETCURSEL, sel >= 0 ? (WPARAM)sel : (WPARAM)-1, 0);
+    s_cur = sel;
+    LoadSel();
+}
+
+static void MovePage(int from, int dir) {
+    int to = from + dir;
+    if (from < 0 || to < 0 || from >= (int)s_pages.size() || to >= (int)s_pages.size()) return;
+    // ctrls listesindeki slotları takas et (diğer kontroller yerinde kalır)
+    std::vector<int> slots;
+    for (auto* p : s_pages) {
+        for (int i = 0; i < (int)g_model.ctrls.size(); i++)
+            if (g_model.ctrls[i] == p) { slots.push_back(i); break; }
+    }
+    if (slots.size() != s_pages.size()) return;
+    std::swap(g_model.ctrls[slots[from]], g_model.ctrls[slots[to]]);
+    std::swap(s_pages[from], s_pages[to]);
+    SyncTabText(s_edTab);
+    RefreshSurface();
+    RebuildList(to);
+    InvalidateRect(GetDlgItem(g_hMain, IDC_SURFACE), nullptr, TRUE);
+    PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0);
+}
+
+static LRESULT CALLBACK TabEdProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    switch (m) {
+    case WM_COMMAND: {
+        int id = LOWORD(w), note = HIWORD(w);
+        if (id == IDE_OK)   { CommitFields(); s_ok = true; s_done = true; return 0; }
+        if (id == IDE_CANCEL) { s_ok = false; s_done = true; return 0; }
+        if (id == IDE_LIST && note == LBN_SELCHANGE) {
+            CommitFields();   // önce açık alanları yaz
+            s_cur = (int)SendMessageW(s_lb, LB_GETCURSEL, 0, 0);
+            LoadSel();
+            return 0;
+        }
+        if (id == IDE_ADD) {
+            CommitFields();
+            Ctrl* pg = g_model.AddPage(s_edTab, L"");
+            if (pg) {
+                pg->props[L"Text"] = pg->name;
+                SyncTabText(s_edTab);
+                RefreshSurface();
+                RebuildList((int)Pages().size() - 1);
+                PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0);
+            }
+            return 0;
+        }
+        if (id == IDE_DEL) {
+            if (s_cur >= 0 && s_cur < (int)s_pages.size()) {
+                Ctrl* victim = s_pages[s_cur];
+                g_model.RemovePage(s_edTab, victim);
+                RefreshSurface();
+                RebuildList(s_cur);
+                PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0);
+            }
+            return 0;
+        }
+        if (id == IDE_UP)   { CommitFields(); MovePage(s_cur, -1); return 0; }
+        if (id == IDE_DOWN) { CommitFields(); MovePage(s_cur, +1); return 0; }
+        if (id == IDE_BACKBTN) {
+            static COLORREF cust[16] = { 0 };
+            CHOOSECOLORW cc = { sizeof(cc) };
+            cc.hwndOwner = h;
+            cc.lpCustColors = cust;
+            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+            COLORREF init = RGB(255, 255, 255);
+            wchar_t b[64]; GetWindowTextW(s_eBack, b, 64);
+            ParseColor(b, init);
+            cc.rgbResult = init;
+            if (ChooseColorW(&cc)) {
+                std::wstring hex = ColorToHex(cc.rgbResult);
+                SetWindowTextW(s_eBack, hex.c_str());
+                CommitFields();
+                InvalidateRect(GetDlgItem(g_hMain, IDC_SURFACE), nullptr, TRUE);
+            }
+            return 0;
+        }
+        // alan düzenlemeleri odak kaybında modele yazılır
+        if ((id == IDE_NAME || id == IDE_TEXT || id == IDE_BACK || id == IDE_TIP) && note == EN_KILLFOCUS) {
+            CommitFields();
+            InvalidateRect(GetDlgItem(g_hMain, IDC_SURFACE), nullptr, TRUE);
+            return 0;
+        }
+        break;
+    }
+    case WM_CLOSE:
+        s_ok = false; s_done = true;
+        return 0;
+    case WM_DESTROY:
+        return 0;
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+
+static HWND MkCtrl(HWND parent, const wchar_t* cls, const wchar_t* txt, DWORD style,
+                   int x, int y, int w, int h, int id) {
+    HWND hc = CreateWindowExW(0, cls, txt, WS_CHILD | WS_VISIBLE | style,
+                              x, y, w, h, parent, (HMENU)(INT_PTR)id, g_hInst, nullptr);
+    SendMessageW(hc, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
+    return hc;
+}
+
+} // namespace tabed
+
+void OpenTabPagesEditor(Ctrl* tab) {
+    using namespace tabed;
+    if (!tab || _wcsicmp(tab->type.c_str(), L"TabControl") != 0) return;
+    s_edTab = tab;
+    s_done = false; s_ok = false;
+    s_snapshot = json::Stringify(g_model.ToJson(), false);
+    g_model.PushUndo();
+
+    RECT orc; GetWindowRect(g_hMain, &orc);
+    int dw = 600, dh = 470;
+    int dx = orc.left + ((orc.right - orc.left) - dw) / 2;
+    int dy = orc.top + ((orc.bottom - orc.top) - dh) / 2;
+
+    static bool reg = false;
+    if (!reg) {
+        WNDCLASSW wc = { 0 };
+        wc.lpfnWndProc = TabEdProc; wc.hInstance = g_hInst;
+        wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+        wc.lpszClassName = L"M2GOD_TABED";
+        RegisterClassW(&wc);
+        reg = true;
+    }
+    s_dlg = CreateWindowExW(0, L"M2GOD_TABED", L"TabPage Koleksiyon Düzenleyicisi",
+                            WS_POPUP | WS_CAPTION | WS_SYSMENU,
+                            dx, dy, dw, dh, g_hMain, nullptr, g_hInst, nullptr);
+    // sol: üye listesi
+    MkCtrl(s_dlg, L"STATIC", L"Üyeler:", SS_LEFT, 14, 12, 200, 18, 0);
+    s_lb = MkCtrl(s_dlg, L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |
+                  LBS_NOTIFY | LBS_HASSTRINGS | WS_BORDER, 14, 34, 250, 330, IDE_LIST);
+    MkCtrl(s_dlg, L"BUTTON", L"Ekle", WS_TABSTOP | BS_PUSHBUTTON, 14, 374, 74, 28, IDE_ADD);
+    MkCtrl(s_dlg, L"BUTTON", L"Kaldır", WS_TABSTOP | BS_PUSHBUTTON, 94, 374, 74, 28, IDE_DEL);
+    MkCtrl(s_dlg, L"BUTTON", L"Yukarı", WS_TABSTOP | BS_PUSHBUTTON, 174, 374, 74, 28, IDE_UP);
+    MkCtrl(s_dlg, L"BUTTON", L"Aşağı", WS_TABSTOP | BS_PUSHBUTTON, 254, 374, 74, 28, IDE_DOWN);
+    // sağ: sayfa özellikleri
+    MkCtrl(s_dlg, L"STATIC", L"TabPage özellikleri:", SS_LEFT, 290, 12, 250, 18, 0);
+    MkCtrl(s_dlg, L"STATIC", L"(Ad) Name", SS_LEFT, 290, 44, 110, 18, 0);
+    s_eName = MkCtrl(s_dlg, L"EDIT", L"", WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 404, 40, 170, 24, IDE_NAME);
+    MkCtrl(s_dlg, L"STATIC", L"Metin (Text)", SS_LEFT, 290, 74, 110, 18, 0);
+    s_eText = MkCtrl(s_dlg, L"EDIT", L"", WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 404, 70, 170, 24, IDE_TEXT);
+    MkCtrl(s_dlg, L"STATIC", L"Arka Plan", SS_LEFT, 290, 104, 110, 18, 0);
+    s_eBack = MkCtrl(s_dlg, L"EDIT", L"", WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 404, 100, 130, 24, IDE_BACK);
+    MkCtrl(s_dlg, L"BUTTON", L"... ", WS_TABSTOP | BS_PUSHBUTTON, 540, 100, 34, 24, IDE_BACKBTN);
+    MkCtrl(s_dlg, L"STATIC", L"Etkin (Enabled)", SS_LEFT, 290, 134, 110, 18, 0);
+    s_cEnab = MkCtrl(s_dlg, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST, 404, 130, 170, 120, IDE_ENAB);
+    SendMessageW(s_cEnab, CB_ADDSTRING, 0, (LPARAM)L"True");
+    SendMessageW(s_cEnab, CB_ADDSTRING, 0, (LPARAM)L"False");
+    MkCtrl(s_dlg, L"STATIC", L"Araç İpucu", SS_LEFT, 290, 164, 110, 18, 0);
+    s_eTip = MkCtrl(s_dlg, L"EDIT", L"", WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 404, 160, 170, 24, IDE_TIP);
+    MkCtrl(s_dlg, L"STATIC",
+           L"Not: Sekme Ekle / Kaldır için TabControl seçiliyken sağ üstteki ok menüsünü de kullanabilirsiniz.",
+           SS_LEFT, 290, 200, 284, 44, 0);
+    // alt: Tamam / İptal
+    MkCtrl(s_dlg, L"BUTTON", L"Tamam", WS_TABSTOP | BS_DEFPUSHBUTTON, 386, 396, 92, 30, IDE_OK);
+    MkCtrl(s_dlg, L"BUTTON", L"İptal", WS_TABSTOP | BS_PUSHBUTTON, 486, 396, 92, 30, IDE_CANCEL);
+
+    RebuildList(0);
+    EnableWindow(g_hMain, FALSE);
+    ShowWindow(s_dlg, SW_SHOW);
+    SetForegroundWindow(s_dlg);
+    SetFocus(s_lb);
+    MSG msg;
+    while (!s_done && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE) { s_ok = false; s_done = true; break; }
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    if (IsWindow(s_dlg)) DestroyWindow(s_dlg);
+    s_dlg = nullptr;
+    EnableWindow(g_hMain, TRUE);
+    SetForegroundWindow(g_hMain);
+    if (!s_ok) {
+        // iptal: açılış anındaki modele dön
+        bool ok = false;
+        json::Value v = json::Parse(s_snapshot, &ok);
+        if (ok) {
+            HWND surf = GetDlgItem(g_hMain, IDC_SURFACE);
+            for (auto* c : g_model.ctrls) if (c->hwnd) { DestroyWindow(c->hwnd); c->hwnd = nullptr; }
+            g_model.FromJson(v);
+            surface::RecreateAll(surf);
+        }
+    }
+    PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0);
+    HWND pr = GetDlgItem(g_hMain, 1510);
+    if (pr) Refresh(pr);
 }
 
 } // namespace props

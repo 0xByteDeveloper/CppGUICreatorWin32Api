@@ -66,6 +66,28 @@ void Catalog::AddBuiltin() {
         e.events.push_back({ b.dev, L"System.EventHandler", L"Action", true });
         elements[e.name] = e;
     }
+    // FAZ 2.6: TabPage — AddBuiltin yolunda da gerekli (Config yoksa)
+    if (!elements.count(L"TabPage")) {
+        ElementDef tp;
+        tp.name = L"TabPage"; tp.kind = L"container"; tp.base = L"Panel";
+        tp.defaultEvent = L"Click"; tp.defaultProperty = L"Text";
+        tp.categoryTr = L"Kapsayıcılar"; tp.toolboxVisible = false; tp.winClass = L"M2GOD_TABPAGE";
+        tp.props.push_back({ L"Name", L"System.String", L"Design", L"tabPage1", L"", true, true });
+        tp.props.push_back({ L"Text", L"System.String", L"Appearance", L"tabPage1", L"", true, true });
+        tp.props.push_back({ L"Location", L"System.Drawing.Point", L"Layout", L"0, 0", L"", true, false });
+        tp.props.push_back({ L"Size", L"System.Drawing.Size", L"Layout", L"0, 0", L"", true, false });
+        tp.props.push_back({ L"BackColor", L"System.Drawing.Color", L"Appearance", L"Control", L"", true, true });
+        tp.props.push_back({ L"ForeColor", L"System.Drawing.Color", L"Appearance", L"ControlText", L"", true, true });
+        tp.props.push_back({ L"Font", L"System.Drawing.Font", L"Appearance", L"Segoe UI, 9pt", L"", true, true });
+        tp.props.push_back({ L"Enabled", L"System.Boolean", L"Behavior", L"True", L"", true, true });
+        tp.props.push_back({ L"Visible", L"System.Boolean", L"Behavior", L"True", L"", true, true });
+        tp.props.push_back({ L"Tag", L"System.String", L"Data", L"", L"", true, true });
+        tp.props.push_back({ L"ToolTipText", L"System.String", L"Behavior", L"", L"", true, true });
+        for (auto& evn : { L"Click", L"TextChanged" })
+            tp.events.push_back({ evn, L"System.EventHandler", L"", true });
+        elements[L"TabPage"] = tp;
+    }
+
     categories = { L"Ortak Denetimler", L"Kapsayıcılar", L"Bileşenler" };
     for (auto& kv : elements) catElements[kv.second.categoryTr].push_back(kv.first);
 }
@@ -186,6 +208,35 @@ bool Catalog::Load(const std::wstring& configPath) {
         }
         if (!hasI) tit->second.props.push_back({ L"Interval", L"System.Int32", L"Behavior", L"1000", L"", true, true });
         if (!hasE) tit->second.props.push_back({ L"Enabled", L"System.Boolean", L"Behavior", L"False", L"", true, true });
+    }
+
+    // Timer bileşenine Interval/Enabled özellikleri garanti edilir (Faz 2.4:
+    // üretilen kod SetTimer/WM_TIMER kullanır; panelde Interval/Enabled görünür)
+
+    // FAZ 2.6: TabPage yerleşik öğesi — TabControl sayfaları artık GERÇEK Ctrl
+    // girişleridir (VS davranışı: sekme şeridine tıkla → sayfa seçilir, panelde
+    // sayfa özellikleri görünür; sayfalar .m2god'a kaydedilir, runtime'da
+    // M2God::TabPage gerçek pencere + TabPages->Add koleksiyonu olur)
+    if (!elements.count(L"TabPage")) {
+        ElementDef tp;
+        tp.name = L"TabPage"; tp.kind = L"container"; tp.base = L"Panel";
+        tp.defaultEvent = L"Click"; tp.defaultProperty = L"Text";
+        tp.categoryTr = L"Kapsayıcılar"; tp.toolboxVisible = false; tp.winClass = L"M2GOD_TABPAGE";
+        tp.props.push_back({ L"Name", L"System.String", L"Design", L"tabPage1", L"", true, true });
+        tp.props.push_back({ L"Text", L"System.String", L"Appearance", L"tabPage1", L"", true, true });
+        tp.props.push_back({ L"Location", L"System.Drawing.Point", L"Layout", L"0, 0", L"", true, false });
+        tp.props.push_back({ L"Size", L"System.Drawing.Size", L"Layout", L"0, 0", L"", true, false });
+        tp.props.push_back({ L"BackColor", L"System.Drawing.Color", L"Appearance", L"Control", L"", true, true });
+        tp.props.push_back({ L"ForeColor", L"System.Drawing.Color", L"Appearance", L"ControlText", L"", true, true });
+        tp.props.push_back({ L"Font", L"System.Drawing.Font", L"Appearance", L"Segoe UI, 9pt", L"", true, true });
+        tp.props.push_back({ L"Enabled", L"System.Boolean", L"Behavior", L"True", L"", true, true });
+        tp.props.push_back({ L"Visible", L"System.Boolean", L"Behavior", L"True", L"", true, true });
+        tp.props.push_back({ L"Tag", L"System.String", L"Data", L"", L"", true, true });
+        tp.props.push_back({ L"ToolTipText", L"System.String", L"Behavior", L"", L"", true, true });
+        tp.props.push_back({ L"UseVisualStyleBackColor", L"System.Boolean", L"Appearance", L"True", L"", true, true });
+        for (auto& evn : { L"Click", L"TextChanged", L"Enter", L"Leave" })
+            tp.events.push_back({ evn, L"System.EventHandler", L"", true });
+        MergeElement(tp);
     }
 
     // Form + temel kapsayıcı elemanlarının katalogda garanti edilmesi

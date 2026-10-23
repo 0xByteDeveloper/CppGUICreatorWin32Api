@@ -1,10 +1,53 @@
-# M2GodWin32 — Faz 2.5.2 God Mode MVP
+# M2GodWin32 — Faz 2.6 God Mode MVP
 
 **Visual Studio 2019 C++ CLR Form Designer deneyimini Win32 API ile yaşatan, tam kapsamlı görsel UI tasarım ortamı.**
 
-> Bu proje `CppGUICreatorWin32Api` deposunun **Faz 2.5.2** geliştirme aşamasıdır.
+> Bu proje `CppGUICreatorWin32Api` deposunun **Faz 2.6** geliştirme aşamasıdır.
 > Katalog kaynağı olarak depodaki **Config_info.json** (.NET Framework WinForms tam eleman kataloğu: 144 eleman, tüm property'ler + event'ler + 203 enum) kullanılır.
 
+
+---
+
+## Faz 2.6 — TabControl/TabPage koleksiyonu (VS davranışı) + tam kapsam emisyonu
+
+TabControl artık VS CLR Designer gibi çalışır:
+
+**Tasarım zamanı:**
+- **Sekme şeridine tıkla → o tabPage SEÇİLİR** — özellik paneli sayfa özelliklerini (Name, Text, BackColor, Font, ToolTipText, Tag...) gösterir; boyutlandırma tutamağı yoktur (sayfa boyutu sekme alanına bağlıdır, VS kuralı).
+- **Seçili TabControl'de sağ üstte AKILLI OK (▶)** — tıklayınca menü: **Sekme Ekle / Sekme Kaldır / Sekmeleri Düzenle...**
+- **Özellikler panelinde TabPages satırı** — tıklayınca **TabPage Koleksiyon Düzenleyicisi** açılır: üye listesi + Ekle/Kaldır/Yukarı/Aşağı + Ad/Metin/Arka Plan (renk seçici)/Etkin/Araç İpucu düzenleme; İptal → açılış anındaki modele döner.
+- **Sayfalar GERÇEK kapsayıcıdır**: bir düğmeyi sayfa alanına bırakın → o sayfanın çocuğu olur (Location sayfa-göreli); sekme değişince çocuklar gizlenir/gösterilir.
+- TabControl eklendiğinde otomatik **tabPage1 + tabPage2** oluşur (VS gibi). Eski tasarımlar (Text satırlarına yazılı sayfalar) açılışta otomatik MİGRE edilir; ilk sayfa çocuklarını devralır.
+
+**Üretilen kod / çalışma zamanı (Global.h v2600):**
+
+```cpp
+// Tasarımcının ürettiği satırlar:
+tabControl1 = new M2God::TabControl(hWnd, IDC_TABCONTROL1, L"", 152, 120, 220, 150);
+tabPage1    = tabControl1->TabPages->Add(L"Ayarlar", ID_TABPAGE1);
+button1     = new M2God::Button(tabPage1->Handle, ID_BUTTON1, L"Kaydet", 96, 48, 100, 32);
+
+// Kullanıcı kodunda WinForms sözdizimi:
+M2God::TabPage* yeni = tabControl1->TabPages->Add(L"Yeni sayfa");   // TabPage* döner
+yeni->Text = L"Bilgi";                       // sekme başlığı da güncellenir
+tabControl1->TabPages->RemoveAt(2);          // Remove(p) / Clear() / Insert(i, t)
+int n = tabControl1->TabPages->Count;
+M2God::TabPage* p = tabControl1->TabPages[0];
+tabControl1->TabPages->SelectedIndex = 1;    // sayfa geçişi otomatik (göster/gizle)
+M2God::TabPage* aktif = tabControl1->SelectedTab();
+tabPage1->BackColor = RGB(240, 240, 255);    // sayfa zemini boyanır
+```
+
+- Sekme değişiminde **sayfa geçişi otomatiktir** (`__SelChanged`); kullanıcı `SelectedIndexChanged` yazmasa bile doğru sayfa görünür.
+- `TabPages->Add(title, id)` tasarımcdan `ID_` makrosuyla çağrılır; elle çağrıda id verilmezse otomatik atanır.
+- Sayfaların `Click` olayı çalışır (sayfa penceresi WM_COMMAND üretir); sayfa içi kontrollerin bildirimleri sayfa penceresinden forma köprülenir (ContainerBridge karşılığı).
+
+**Tam kapsam emisyonu (Config_info.json ile %100 hizalama):**
+- Her kontrolün **Tag** özelliği artık gerçekten çalışır ve koda yazılır.
+- Yeni gerçek özellikler: TextBox `BorderStyle`/`ScrollBars`, CheckBox `ThreeState`/`CheckState`/`Appearance`, Button/CheckBox `FlatStyle`, ListView `Activation`/`HotTracking`/`HoverSelection`, TreeView `ItemHeight`/`LineColor`/`Indent`, ProgressBar `MarqueeAnimationSpeed`, RichTextBox `WordWrap`/`DetectUrls`/`ZoomFactor`, PictureBox `BorderStyle`, DateTimePicker `MinDate`/`MaxDate`, TrackBar `TickStyle`.
+- Katalogdaki **tüm** browsable+can_set özellikler panelde görünür; Win32'de doğrudan karşılığı olmayanlar ve varsayılandan sapanlar üretilen koda **yorum satırı olarak** taşınır (hiçbir tasarım bilgisi sessizce kaybolmaz).
+
+**Doğrulama:** Üretilen proje C++14 **ve** C++17 ile 0 hata; runtime `TabPages->Add/RemoveAt/Count/[]/Text` wine altında canlı kanıtlandı (3. sekme eklendi, başlıklar değişti, sayfa geçişinde içerik doğru gösterildi). Tasarımcıda akıllı ok menüsü, koleksiyon editörü ve sayfa seçimi ekran görüntüleriyle doğrulandı (EkranGoruntuleri_Faz2.6/).
 
 ---
 

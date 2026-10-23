@@ -1,4 +1,4 @@
-// gen_test.cpp — Faz 2.5 üretilen kod uçtan uca testi:
+// gen_test.cpp — Faz 2.6 üretilen kod uçtan uca testi (TabPage koleksiyonu + tam kapsam):
 // TAM KAPSAMLI M2God SDK (v2500): tüm kontroller + diyaloglar + bileşenler +
 // WM_NOTIFY/WM_HSCROLL yönlendirmesi + form olayları + kapsamlı özellik emisyonu
 #include "app.h"
@@ -8,7 +8,6 @@
 
 int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     g_catalog.Load(L"Config_info.json");
-
     g_model.formW = 900; g_model.formH = 640;
     g_model.formProps[L"Text"] = L"SDK25Test";
 
@@ -98,11 +97,28 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     dtp->w = 160; dtp->h = 26;
     dtp->events[L"ValueChanged"] = L"dateTimePicker1_ValueChanged";
 
-    // tabControl1 — SelectedIndexChanged (TCN_SELCHANGE) + sayfalar Text'ten
+    // tabControl1 — FAZ 2.6: sayfalar GERÇEK TabPage Ctrl'leri (Add otomatik 2 sayfa)
     Ctrl* tc = g_model.Add(L"TabControl", 20, 370);
-    tc->w = 220; tc->h = 120;
-    tc->props[L"Text"] = L"Sayfa1\nSayfa2";
+    tc->w = 260; tc->h = 130;
     tc->events[L"SelectedIndexChanged"] = L"tabControl1_SelectedIndexChanged";
+    {
+        auto pages = TabPagesOf(tc);
+        if (pages.size() >= 2) {
+        pages[0]->props[L"Text"] = L"Ayarlar";
+        pages[1]->props[L"Text"] = L"Bilgi";
+        SyncTabText(tc);
+        // sayfa içine kontroller (VS davranışı: parent = sayfa)
+        Ctrl* pbtn = g_model.Add(L"Button", 12, 8, pages[0]);
+        pbtn->w = 140; pbtn->h = 28;
+        pbtn->props[L"Text"] = L"SayfaYaz";
+        pbtn->events[L"Click"] = L"tabPageButton_Click";
+        Ctrl* plb = g_model.Add(L"Label", 12, 8, pages[1]);
+        plb->w = 180; plb->h = 23;
+        plb->props[L"Text"] = L"Sayfa 2 icerigi";
+        // runtime API testi: tabControl1->TabPages->Add / RemoveAt / Count
+        Ctrl* tag1 = pages[0]; tag1->props[L"Tag"] = L"ilk-sayfa";
+        }
+    }
 
     // statusStrip1 — Parts
     Ctrl* ss = g_model.Add(L"StatusStrip", 0, 0);

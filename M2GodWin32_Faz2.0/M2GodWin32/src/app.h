@@ -38,6 +38,7 @@ extern bool      g_gridVisible;    // tasarım yüzeyinde ızgara noktaları (G�
 #define MWM_EVENT_DBLCLICK  (WM_APP+3)   // wParam: Ctrl*, lParam: wchar_t* eventName (heap)
 #define MWM_PROPS_APPLIED   (WM_APP+4)   // özellik paneli uyguladı → surface yenile
 #define MWM_STATUS          (WM_APP+5)   // lParam: wchar_t* text (heap, static havuz)
+#define MWM_EDIT_TABPAGES   (WM_APP+11)  // FAZ 2.6: TabPage koleksiyon editörü aç (wParam: Ctrl* TabControl)
 
 // ---------------------------------------------------------------------------
 // Dize / dosya yardımcıları

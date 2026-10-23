@@ -498,7 +498,7 @@ static int ShowWelcomeDialog(std::wstring& openPath) {
     EnsureDialogClass();
     int result = 0;
     HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"M2GOD_CODEDLG",
-        L"M2GodWin32 Faz 2.5.2 — Başlangıç", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        L"M2GodWin32 Faz 2.6 — Başlangıç", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         360, 200, 640, 420, nullptr, nullptr, g_hInst, nullptr);
     SetWindowLongW(dlg, GWL_STYLE, (GetWindowLongW(dlg, GWL_STYLE) & ~WS_MAXIMIZEBOX) | WS_CAPTION);
     HWND hint = CreateWindowExW(0, L"STATIC",
@@ -959,7 +959,7 @@ static LRESULT CALLBACK FrameProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             return 0;
         case CMD_ABOUT:
             MessageBoxW(h,
-                L"M2GodWin32 — Faz 2.5.2 God Mode MVP\n\n"
+                L"M2GodWin32 — Faz 2.6 God Mode MVP\n\n"
                 L"Win32 API Görsel Form Tasarımcısı\n"
                 L"• Config_info.json kataloğu ile tüm .NET elemanları\n"
                 L"• Sürükle-bırak VE tıkla-yerleştir (ESC = iptal)\n"
@@ -984,6 +984,14 @@ L"  pictureBox1->Image = M2God::Image::FromFile(L\"resim.png\");  // PNG/JPG/GIF
                 L"• Olay yönlendirme: WM_NOTIFY/WM_HSCROLL + DoubleClick/TextChanged/\n"
                 L"  ItemCheck/AfterSelect/Scroll/ValueChanged + form Mouse/Key olayları\n"
                 L"•MenuStrip/ContextMenuStrip gerçek HMENU + ItemClick\n\n"
+                L"Faz 2.6 yenilikleri (TabControl/TabPage koleksiyonu + tam kapsam):\n"
+                L"• Sekme şeridine tıkla → tabPage seçilir (VS davranışı)\n"
+                L"• Seçili TabControl'de sağ üstte AKILLI OK: Sekme Ekle / Sekme Kaldır\n"
+                L"• Özellikler panelinde TabPages → Koleksiyon Düzenleyici (Ekle/Kaldır/\n"
+                L"  Yukarı/Aşağı + Ad/Metin/Arka Plan/Etkin düzenleme)\n"
+                L"• Sayfalar gerçek kapsayıcı: kontrolleri sayfanın içine bırakın\n"
+                L"• Runtime: tabControl1->TabPages->Add/RemoveAt/Clear/Count/[], \n"
+                L"  tabPage1->Text/BackColor, sayfa geçişleri otomatik\n\n"
                 L"Visual Studio 2019 C++ Win32 API projesi",
                 L"Hakkında", MB_OK | MB_ICONINFORMATION);
             return 0;
@@ -996,7 +1004,7 @@ L"  pictureBox1->Image = M2God::Image::FromFile(L\"resim.png\");  // PNG/JPG/GIF
     case MWM_MODEL_CHANGED:
         g_modelDirty = true;
         {
-            std::wstring t = L"M2GodWin32 Faz 2.5.2";
+            std::wstring t = L"M2GodWin32 Faz 2.6";
             if (!s_file.empty()) t += L" — " + GetFileName(s_file) + (g_modelDirty ? L" *" : L"");
             SetWindowTextW(h, t.c_str());
         }
@@ -1012,7 +1020,7 @@ L"  pictureBox1->Image = M2God::Image::FromFile(L\"resim.png\");  // PNG/JPG/GIF
                     SYSTEMTIME st; GetLocalTime(&st);
                     wchar_t tb[64]; swprintf(tb, 64, L"%02d:%02d:%02d", st.wHour, st.wMinute, st.wSecond);
                     Status(std::wstring(L"Otomatik kaydedildi: ") + GetFileName(s_file) + L"  " + tb);
-                    std::wstring t = L"M2GodWin32 Faz 2.5.2 — " + GetFileName(s_file);
+                    std::wstring t = L"M2GodWin32 Faz 2.6 — " + GetFileName(s_file);
                     SetWindowTextW(h, t.c_str());
                 }
             }
@@ -1043,6 +1051,12 @@ L"  pictureBox1->Image = M2God::Image::FromFile(L\"resim.png\");  // PNG/JPG/GIF
     case MWM_STATUS: {
         wchar_t* t = (wchar_t*)l;
         if (t) { Status(t); free(t); }
+        return 0;
+    }
+    case MWM_EDIT_TABPAGES: {
+        // FAZ 2.6: TabPage Koleksiyon Düzenleyicisi (akıllı ok menüsü / TabPages satırı)
+        Ctrl* tab = (Ctrl*)w;
+        if (tab && IsWindow(tab->hwnd)) props::OpenTabPagesEditor(tab);
         return 0;
     }
     case WM_DESTROY:
@@ -1103,7 +1117,7 @@ int Run(HINSTANCE hInst, LPWSTR cmdLine) {
     wc.lpszClassName = L"M2GOD_MAIN";
     wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(1));
     RegisterClassW(&wc);
-    HWND h = CreateWindowExW(0, L"M2GOD_MAIN", L"M2GodWin32 Faz 2.5.2 — God Mode MVP",
+    HWND h = CreateWindowExW(0, L"M2GOD_MAIN", L"M2GodWin32 Faz 2.6 — God Mode MVP",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         8, 8, 1424, 856, nullptr, nullptr, hInst, nullptr);
     g_hMain = h;

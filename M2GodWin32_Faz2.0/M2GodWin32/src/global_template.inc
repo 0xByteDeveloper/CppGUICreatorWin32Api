@@ -1,6 +1,6 @@
 R"M2GODGLOBAL(// ============================================================================
-//  Global.h — M2GodWin32 UI Designer (Faz 2.5.2) TAM KAPSAMLI nesne kutuphanesi
-//  M2GOD-GLOBAL v2502
+//  Global.h — M2GodWin32 UI Designer (Faz 2.6) TAM KAPSAMLI nesne kutuphanesi
+//  M2GOD-GLOBAL v2600
 //  !! BU DOSYAYI DUZENLEMEYIN — tasarimci gerektiginde gunceller.
 //  Amac: Form1 olay kodlarinda WinForms benzeri sozdizimi (saf Win32 uzerinde):
 //      timer1->Enabled = false;                  // Timer durdurur
@@ -768,10 +768,38 @@ public:
             return r == BST_CHECKED ? CheckState::Checked : r == BST_INDETERMINATE ? CheckState::Indeterminate : CheckState::Unchecked;
         }
     } CheckState{ this };
-    // ThreeState: BS_AUTO3STATE stili gerektirir (yaratma sirasinda); bilgi amacli saklanir
-    void SetThreeState(bool v) { TagStored3S = v ? 1 : 0; }
-    bool GetThreeState() const { return TagStored3S != 0; }
-    int  TagStored3S = 0;
+    // ThreeState (Faz 2.6): BS_AUTO3STATE stiline gecer — Indeterminate desteklenir
+    class ThreeStateProp {
+        Control* c;
+    public:
+        explicit ThreeStateProp(Control* o) : c(o) {}
+        ThreeStateProp& operator=(bool v) {
+            if (c->Handle) RestyleWindow(c->Handle, v ? BS_AUTO3STATE : BS_AUTOCHECKBOX,
+                                                v ? BS_AUTOCHECKBOX : BS_AUTO3STATE);
+            return *this;
+        }
+    } ThreeState{ this };
+    // Appearance (Faz 2.6): Normal | Button (BS_PUSHLIKE)
+    class AppearanceProp {
+        Control* c;
+    public:
+        explicit AppearanceProp(Control* o) : c(o) {}
+        AppearanceProp& operator=(const wchar_t* ap) {
+            if (c->Handle) {
+                bool btn = (_wcsicmp(ap, L"Button") == 0);
+                RestyleWindow(c->Handle, btn ? BS_PUSHLIKE : 0, btn ? 0 : BS_PUSHLIKE);
+            }
+            return *this;
+        }
+    } Appearance{ this };
+    void SetThreeState(bool v) { ThreeState = v; }
+    bool GetThreeState() const {
+        return c3s();
+    }
+    bool c3s() const {
+        if (!Handle) return false;
+        return (GetWindowLongPtrW(Handle, GWL_STYLE) & BS_AUTO3STATE) != 0;
+    }
 };
 
 class RadioButton : public CheckBox {
@@ -982,6 +1010,36 @@ public:
             return *this;
         }
     } WordWrap{ this };
+    // ---- BorderStyle (Faz 2.6) ----
+    class BorderStyleProp {
+        Control* c;
+    public:
+        explicit BorderStyleProp(Control* o) : c(o) {}
+        BorderStyleProp& operator=(M2God::BorderStyle b) {
+            if (!c->Handle) return *this;
+            switch (b) {
+            case M2God::BorderStyle::None:        RestyleWindow(c->Handle, 0, WS_BORDER, 0, WS_EX_CLIENTEDGE); break;
+            case M2God::BorderStyle::FixedSingle: RestyleWindow(c->Handle, WS_BORDER, 0, 0, WS_EX_CLIENTEDGE); break;
+            case M2God::BorderStyle::Fixed3D:     RestyleWindow(c->Handle, 0, WS_BORDER, WS_EX_CLIENTEDGE, 0); break;
+            }
+            return *this;
+        }
+    } BorderStyle{ this };
+    // ---- ScrollBars (Faz 2.6 — multiline edit'te gecerli) ----
+    // None=0, Horizontal=1, Vertical=2, Both=3 (WinForms TextBoxScrollBars)
+    class ScrollBarsProp {
+        Control* c;
+    public:
+        explicit ScrollBarsProp(Control* o) : c(o) {}
+        ScrollBarsProp& operator=(int v) {
+            if (!c->Handle) return *this;
+            LONG_PTR add = 0, rem = 0;
+            if (v & 1) add |= WS_HSCROLL; else rem |= WS_HSCROLL;
+            if (v & 2) add |= WS_VSCROLL; else rem |= WS_VSCROLL;
+            RestyleWindow(c->Handle, add, rem);
+            return *this;
+        }
+    } ScrollBars{ this };
 
     // ---- metotlar ----
     void AppendText(const std::wstring& s) {
@@ -1153,6 +1211,41 @@ public:
             return std::wstring(buf);
         }
     } SelectedText{ this };
+    // --- Faz 2.6: WordWrap / DetectUrls / ZoomFactor ---
+    class WordWrapProp {
+        Control* c;
+    public:
+        explicit WordWrapProp(Control* o) : c(o) {}
+        WordWrapProp& operator=(bool v) {
+            if (c->Handle) {
+                HDC dc = GetDC(c->Handle);
+                // 0 = kaydirma yok; satir genisligi = istemci genisligi (sarmala)
+                SendMessageW(c->Handle, EM_SETTARGETDEVICE, (WPARAM)dc, v ? 0 : 20000);
+                ReleaseDC(c->Handle, dc);
+            }
+            return *this;
+        }
+    } WordWrap{ this };
+    class DetectUrlsProp {
+        Control* c;
+    public:
+        explicit DetectUrlsProp(Control* o) : c(o) {}
+        DetectUrlsProp& operator=(bool v) { if (c->Handle) SendMessageW(c->Handle, EM_AUTOURLDETECT, v ? 1 : 0, 0); return *this; }
+    } DetectUrls{ this };
+    class ZoomFactorProp {
+        Control* c;
+    public:
+        explicit ZoomFactorProp(Control* o) : c(o) {}
+        // WinForms: 1.0 = %100 (0.125 .. 64.0)
+        ZoomFactorProp& operator=(double z) { if (c->Handle) SendMessageW(c->Handle, EM_SETZOOM, (WPARAM)(int)(z * 64), (LPARAM)64); return *this; }
+        operator double() const {
+            if (!c->Handle) return 1.0;
+            int num = 0, den = 0;
+            LRESULT r = SendMessageW(c->Handle, EM_GETZOOM, (WPARAM)&num, (LPARAM)&den);
+            (void)r;
+            return den ? (double)num / (double)den : 1.0;
+        }
+    } ZoomFactor{ this };
     // BackColor — RichEdit WM_CTLCOLOR gondermez; EM_SETBKCOLOR kullanir
     virtual void OnBackColorChanged() override {
         if (Handle) SendMessageW(Handle, EM_SETBKCOLOR, 0, (LPARAM)CtrlColorInfo(Handle).back);
@@ -1748,6 +1841,48 @@ public:
         if (!Handle || i < 0) return false;
         return (SendMessageW(Handle, LVM_GETITEMSTATE, (WPARAM)i, LVIS_STATEIMAGEMASK) >> 12) == 2;
     }
+    // --- Faz 2.6: etkinlesme/izleme ozellikleri (LVS_EX) ---
+    class ActivationProp {
+        Control* c;
+    public:
+        explicit ActivationProp(Control* o) : c(o) {}
+        // OneClick | TwoClick | Standard (WinForms ItemActivation)
+        ActivationProp& operator=(const wchar_t* a) {
+            if (c->Handle) {
+                bool one = (_wcsicmp(a, L"OneClick") == 0);
+                bool two = (_wcsicmp(a, L"TwoClick") == 0);
+                LONG_PTR add = 0, rem = 0;
+                if (one) { add = LVS_EX_ONECLICKACTIVATE; rem = LVS_EX_TWOCLICKACTIVATE; }
+                else if (two) { add = LVS_EX_TWOCLICKACTIVATE; rem = LVS_EX_ONECLICKACTIVATE; }
+                else { rem = LVS_EX_ONECLICKACTIVATE | LVS_EX_TWOCLICKACTIVATE; }
+                SendMessageW(c->Handle, LVM_SETEXTENDEDLISTVIEWSTYLE, 0, (LPARAM)add);
+                (void)rem;
+            }
+            return *this;
+        }
+    } Activation{ this };
+    class HotTrackingProp {
+        Control* c;
+    public:
+        explicit HotTrackingProp(Control* o) : c(o) {}
+        HotTrackingProp& operator=(bool v) {
+            if (c->Handle)
+                SendMessageW(c->Handle, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
+                             (LPARAM)(v ? (LVS_EX_TRACKSELECT | LVS_EX_ONECLICKACTIVATE | LVS_EX_UNDERLINEHOT) : 0));
+            return *this;
+        }
+    } HotTracking{ this };
+    class HoverSelectionProp {
+        Control* c;
+    public:
+        explicit HoverSelectionProp(Control* o) : c(o) {}
+        HoverSelectionProp& operator=(bool v) {
+            if (c->Handle)
+                SendMessageW(c->Handle, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
+                             (LPARAM)(v ? LVS_EX_TRACKSELECT : 0));
+            return *this;
+        }
+    } HoverSelection{ this };
     bool MultiSelect = true;   // yaratma stili (LVS_SINGLESEL); bilgi amacli
     M2God::SortOrder Sorting = M2God::SortOrder::None;
     void Clear() { if (Handle) { SendMessageW(Handle, LVM_DELETEALLITEMS, 0, 0); } }
@@ -1913,6 +2048,21 @@ public:
         explicit IndentProp(Control* o) : c(o) {}
         IndentProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, TVM_SETINDENT, (WPARAM)v, 0); return *this; }
     } Indent{ this };
+    // --- Faz 2.6: satir yuksekligi + cizgi rengi ---
+    class ItemHeightProp {
+        Control* c;
+    public:
+        explicit ItemHeightProp(Control* o) : c(o) {}
+        ItemHeightProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, TVM_SETITEMHEIGHT, (WPARAM)v, 0); return *this; }
+        operator int() const { return c->Handle ? (int)SendMessageW(c->Handle, TVM_GETITEMHEIGHT, 0, 0) : 0; }
+    } ItemHeight{ this };
+    class LineColorProp {
+        Control* c;
+    public:
+        explicit LineColorProp(Control* o) : c(o) {}
+        LineColorProp& operator=(COLORREF v) { if (c->Handle) SendMessageW(c->Handle, TVM_SETLINECOLOR, 0, (LPARAM)v); return *this; }
+        operator COLORREF() const { return c->Handle ? (COLORREF)SendMessageW(c->Handle, TVM_GETLINECOLOR, 0, 0) : RGB(0, 0, 0); }
+    } LineColor{ this };
     std::wstring PathSeparator = L"\\";
 };
 
@@ -1971,6 +2121,19 @@ public:
             return *this;
         }
     } Style{ this };
+    // --- Faz 2.6: MarqueeAnimationSpeed (ms; 0 = durur, >0 = marquee baslar) ---
+    class MarqueeSpeedProp {
+        Control* c;
+    public:
+        explicit MarqueeSpeedProp(Control* o) : c(o) {}
+        MarqueeSpeedProp& operator=(int v) {
+            if (c->Handle) {
+                RestyleWindow(c->Handle, v > 0 ? PBS_MARQUEE : 0, v > 0 ? 0 : PBS_MARQUEE);
+                SendMessageW(c->Handle, PBM_SETMARQUEE, v > 0 ? TRUE : FALSE, (LPARAM)v);
+            }
+            return *this;
+        }
+    } MarqueeAnimationSpeed{ this };
     void PerformStep() { if (Handle) SendMessageW(Handle, PBM_STEPIT, 0, 0); }
     void Increment(int n) { if (Handle) SendMessageW(Handle, PBM_DELTAPOS, (WPARAM)n, 0); }
     int  StepStored = 10;
@@ -2163,6 +2326,31 @@ public:
             return M2DateTime();
         }
     } Value{ this };
+    // --- Faz 2.6: MinDate / MaxDate ("YYYY-MM-DD" veya "YYYY-MM-DD HH:MM") ---
+    class MinMaxDateProp {
+        Control* c;
+        bool isMin;
+    public:
+        explicit MinMaxDateProp(Control* o, bool mn) : c(o), isMin(mn) {}
+        MinMaxDateProp& operator=(const wchar_t* iso) {
+            if (!c->Handle) return *this;
+            SYSTEMTIME st = { 0 };
+            int y = 0, mo = 0, d = 0;
+            if (swscanf(iso, L"%d-%d-%d", &y, &mo, &d) == 3 && y >= 1601 && y <= 30827) {
+                st.wYear = (WORD)y; st.wMonth = (WORD)mo; st.wDay = (WORD)d;
+                SYSTEMTIME range[2];
+                DateTime_SetRange(c->Handle, GDTR_MIN | GDTR_MAX, range);
+                // mevcut diger siniri koru
+                SYSTEMTIME cur[2];
+                DWORD gd = DateTime_GetRange(c->Handle, cur);
+                if (isMin) { range[0] = st; range[1] = cur[1]; if (!(gd & GDTR_MAX)) DateTime_SetRange(c->Handle, GDTR_MIN, range); else DateTime_SetRange(c->Handle, GDTR_MIN | GDTR_MAX, range); }
+                else { range[1] = st; range[0] = cur[0]; if (!(gd & GDTR_MIN)) DateTime_SetRange(c->Handle, GDTR_MAX, range); else DateTime_SetRange(c->Handle, GDTR_MIN | GDTR_MAX, range); }
+            }
+            return *this;
+        }
+    };
+    MinMaxDateProp MinDate{ this, true };
+    MinMaxDateProp MaxDate{ this, false };
     class FormatProp {
         DateTimePicker* c;
     public:
@@ -2272,10 +2460,108 @@ public:
 };
 
 // ============================================================================
+//  TabPage (M2GOD_TABPAGE_GEN) — TabControl'un GERCEK sayfa penceresi (Faz 2.6)
+//  Sekme degistirilince TabControl sayfa penceresini gosterir/gizler; diger
+//  kontroller sayfanin cocugu olarak yaratilir (parent = tabPageN->Handle).
+//  WinForms karsiligi: tabControl1->TabPages->Add(L"Sayfa") -> TabPage*
+// ============================================================================
+inline LRESULT CALLBACK M2TabPageProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    // sayfa icindeki kontrollerin WM_COMMAND/WM_NOTIFY'i sayfaya gelir —
+    // dogrudan forma tasir (ContainerBridge karsiligi; Faz 2.6)
+    if (m == WM_COMMAND || m == WM_NOTIFY) {
+        HWND form = GetAncestor(h, GA_ROOT);
+        if (form && form != h) { SendMessageW(form, m, w, l); return 0; }
+    }
+    if (m == WM_ERASEBKGND) {
+        HDC dc = (HDC)w; RECT rc; GetClientRect(h, &rc);
+        ColorInfo ci = CtrlColorInfo(h);
+        COLORREF c = (ci.back != 0xFFFFFFFF) ? ci.back : RGB(255, 255, 255);
+        HBRUSH br = CreateSolidBrush(c); FillRect(dc, &rc, br); DeleteObject(br);
+        return 1;
+    }
+    if (m == WM_PAINT) {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+        RECT rc; GetClientRect(h, &rc);
+        ColorInfo ci = CtrlColorInfo(h);
+        COLORREF c = (ci.back != 0xFFFFFFFF) ? ci.back : RGB(255, 255, 255);
+        HBRUSH br = CreateSolidBrush(c); FillRect(dc, &rc, br); DeleteObject(br);
+        EndPaint(h, &ps);
+        return 0;
+    }
+    if (m == WM_LBUTTONDOWN) {
+        // TabPage Click olayi -> WM_COMMAND(BN_CLICKED) dogrudan forma
+        HWND form = GetAncestor(h, GA_ROOT);
+        UINT id = (UINT)(INT_PTR)GetDlgCtrlID(h);
+        if (form && id) SendMessageW(form, WM_COMMAND, MAKEWPARAM(id, BN_CLICKED), (LPARAM)h);
+        return 0;
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+inline void EnsureTabPageClass() {
+    static bool done = false; if (done) return; done = true;
+    WNDCLASSW wc = { 0 };
+    wc.lpfnWndProc = M2TabPageProc;
+    wc.hInstance   = GetModuleHandleW(nullptr);
+    wc.hCursor     = LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW);
+    wc.hbrBackground = nullptr;
+    wc.lpszClassName = L"M2GOD_TABPAGE_GEN";
+    RegisterClassW(&wc);
+}
+
+class TabPage : public Control {
+public:
+    HWND TabCtl = NULL;    // sahip TabControl HWND'si
+    int  PageIndex = -1;   // TabControl tarafindan guncellenir
+    TabPage() {}
+    TabPage(HWND tabCtl, int id, const std::wstring& text) {
+        EnsureTabPageClass();
+        TabCtl = tabCtl;
+        // gorunmez yaratilir — TabControl __ShowPage ile gosterir
+        Handle = CreateWindowExW(0, L"M2GOD_TABPAGE_GEN", text.c_str(),
+            WS_CHILD | WS_CLIPSIBLINGS, 0, 0, 10, 10,
+            tabCtl, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+    }
+    // ---- Text: pencere metni + sekme basligi aynen ----
+    class TextProp {
+        TabPage* c;
+    public:
+        explicit TextProp(TabPage* o) : c(o) {}
+        TextProp& operator=(const std::wstring& t) {
+            if (c->Handle) SetWindowTextW(c->Handle, t.c_str());
+            if (c->TabCtl && c->PageIndex >= 0) {
+                TCITEMW ti = { 0 };
+                ti.mask = TCIF_TEXT;
+                ti.pszText = (LPWSTR)t.c_str();
+                SendMessageW(c->TabCtl, TCM_SETITEMW, (WPARAM)c->PageIndex, (LPARAM)&ti);
+            }
+            return *this;
+        }
+        TextProp& operator=(const wchar_t* s) { return *this = std::wstring(s ? s : L""); }
+        operator std::wstring() const {
+            if (!c->Handle) return L"";
+            int n = GetWindowTextLengthW(c->Handle);
+            if (n <= 0) return L"";
+            std::vector<wchar_t> buf((size_t)n + 2, 0);
+            GetWindowTextW(c->Handle, buf.data(), n + 1);
+            return std::wstring(buf.data());
+        }
+    } Text{ this };
+    // ---- ToolTipText (WinForms TabPage) — bilgi amacli saklanir ----
+    std::wstring ToolTipText;
+};
+
+// ============================================================================
 //  TabControl
 // ============================================================================
 class TabControl : public Control {
 public:
+    std::vector<TabPage*> pageList;   // sayfalar (Add/RemoveAt gunceller)
+    ~TabControl() {
+        for (auto* p : pageList) delete p;
+        pageList.clear();
+    }
     TabControl(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
         Handle = CreateWindowExW(WS_EX_CLIENTEDGE, L"SysTabControl32", text.c_str(),
             WS_TABSTOP | WS_CLIPCHILDREN | TCS_TABS | WS_CHILD | WS_VISIBLE, x, y, w, h,
@@ -2283,31 +2569,89 @@ public:
         Id = id;
         if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
     }
-    // tabControl1->Pages->Add(L"tabPage1");  Pages->SelectedIndex = 0;
+    // --- sayfa pencere yerlesimi (TCM_ADJUSTRECT goruntuleme alani) ---
+    void __LayoutPages() {
+        if (!Handle || pageList.empty()) return;
+        RECT full; GetClientRect(Handle, &full);
+        RECT dr = full;
+        SendMessageW(Handle, TCM_ADJUSTRECT, FALSE, (LPARAM)&dr);
+        if (dr.right <= dr.left || dr.bottom <= dr.top) dr = full;
+        for (auto* p : pageList) {
+            if (p && p->Handle)
+                SetWindowPos(p->Handle, nullptr, dr.left, dr.top,
+                             dr.right - dr.left, dr.bottom - dr.top,
+                             SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
+    void __ShowPage(int i) {
+        __LayoutPages();
+        for (size_t k = 0; k < pageList.size(); k++) {
+            TabPage* p = pageList[k];
+            if (p && p->Handle) ShowWindow(p->Handle, ((int)k == i) ? SW_SHOWNA : SW_HIDE);
+        }
+    }
+    // WM_NOTIFY TCN_SELCHANGE router'i cagirir — sayfa gecisini saglar
+    void __SelChanged() {
+        int i = Handle ? (int)SendMessageW(Handle, TCM_GETCURSEL, 0, 0) : -1;
+        if (i >= 0 && i < (int)pageList.size()) __ShowPage(i);
+    }
+    // tabControl1->Pages->Add(L"tabPage1");  -> TabPage* doner (Faz 2.6)
+    // id = 0 -> otomatik; tasarimcidan gelen kodda IDS makrosu kullanilir
     class PagesProp {
         TabControl* c;
     public:
         explicit PagesProp(TabControl* o) : c(o) {}
         PagesProp* operator->() { return this; }
-        int GetCount() const { return c->Handle ? (int)SendMessageW(c->Handle, TCM_GETITEMCOUNT, 0, 0) : 0; }
-        void Add(const std::wstring& title) {
-            if (!c->Handle) return;
+        int GetCount() const { return (int)c->pageList.size(); }
+        TabPage* Add(const std::wstring& title, int id = 0) {
+            if (!c->Handle) return nullptr;
+            if (!id) id = 0x8F00 + c->Id * 16 + (int)c->pageList.size() + 1;
+            TabPage* p = new TabPage(c->Handle, id, title);
+            p->PageIndex = (int)c->pageList.size();
+            c->pageList.push_back(p);
             TCITEMW ti = { 0 };
             ti.mask = TCIF_TEXT;
             ti.pszText = (LPWSTR)title.c_str();
-            SendMessageW(c->Handle, TCM_INSERTITEMW, (WPARAM)GetCount(), (LPARAM)&ti);
+            SendMessageW(c->Handle, TCM_INSERTITEMW, (WPARAM)(c->pageList.size() - 1), (LPARAM)&ti);
+            if (c->pageList.size() == 1) c->__ShowPage(0);
+            return p;
         }
         void Insert(int i, const std::wstring& title) {
             if (!c->Handle) return;
+            if (i < 0 || i > (int)c->pageList.size()) i = (int)c->pageList.size();
+            int id = 0x8F00 + c->Id * 16 + (int)c->pageList.size() + 1;
+            TabPage* p = new TabPage(c->Handle, id, title);
+            c->pageList.insert(c->pageList.begin() + i, p);
+            for (size_t k = 0; k < c->pageList.size(); k++) c->pageList[k]->PageIndex = (int)k;
             TCITEMW ti = { 0 };
             ti.mask = TCIF_TEXT;
             ti.pszText = (LPWSTR)title.c_str();
             SendMessageW(c->Handle, TCM_INSERTITEMW, (WPARAM)i, (LPARAM)&ti);
+            c->__ShowPage((int)SendMessageW(c->Handle, TCM_GETCURSEL, 0, 0));
         }
-        void RemoveAt(int i) { if (c->Handle) SendMessageW(c->Handle, TCM_DELETEITEM, (WPARAM)i, 0); }
-        void Clear() { if (c->Handle) { while ((int)SendMessageW(c->Handle, TCM_DELETEITEM, 0, 0)) {} } }
+        void RemoveAt(int i) {
+            if (!c->Handle || i < 0 || i >= (int)c->pageList.size()) return;
+            SendMessageW(c->Handle, TCM_DELETEITEM, (WPARAM)i, 0);
+            delete c->pageList[i];
+            c->pageList.erase(c->pageList.begin() + i);
+            for (size_t k = 0; k < c->pageList.size(); k++) c->pageList[k]->PageIndex = (int)k;
+            c->__ShowPage((int)SendMessageW(c->Handle, TCM_GETCURSEL, 0, 0));
+        }
+        void Remove(TabPage* p) {
+            for (size_t i = 0; i < c->pageList.size(); i++)
+                if (c->pageList[i] == p) { RemoveAt((int)i); return; }
+        }
+        void Clear() {
+            if (!c->Handle) return;
+            for (auto* p : c->pageList) delete p;
+            c->pageList.clear();
+            SendMessageW(c->Handle, TCM_DELETEALLITEMS, 0, 0);
+        }
+        TabPage* operator[](int i) const {
+            return (i >= 0 && i < (int)c->pageList.size()) ? c->pageList[i] : nullptr;
+        }
         std::wstring GetText(int i) const {
-            if (!c->Handle) return L"";
+            if (!c->Handle || i < 0 || i >= (int)c->pageList.size()) return L"";
             wchar_t buf[256] = L"";
             TCITEMW ti = { 0 };
             ti.mask = TCIF_TEXT;
@@ -2320,7 +2664,13 @@ public:
             PagesProp* p;
         public:
             explicit SelIdxProp(PagesProp* o) : p(o) {}
-            SelIdxProp& operator=(int i) { if (p->c->Handle) SendMessageW(p->c->Handle, TCM_SETCURSEL, (WPARAM)i, 0); return *this; }
+            SelIdxProp& operator=(int i) {
+                if (p->c->Handle) {
+                    SendMessageW(p->c->Handle, TCM_SETCURSEL, (WPARAM)i, 0);
+                    p->c->__ShowPage(i);   // sayfa gecisi (TCM_SETCURSEL bildirim uretmez)
+                }
+                return *this;
+            }
             operator int() const { return p->c->Handle ? (int)SendMessageW(p->c->Handle, TCM_GETCURSEL, 0, 0) : -1; }
         } SelectedIndex{ this };
         class CountProp {
@@ -2330,7 +2680,12 @@ public:
             operator int() const { return p->GetCount(); }
         } Count{ this };
     } Pages{ this };
-    PagesProp TabPages{ this };   // WinForms adi
+    PagesProp TabPages{ this };   // WinForms adi (Faz 2.6: TabPage* API)
+    // tabControl1->SelectedTab() -> aktif sayfa (WinForms SelectedTab karsiligi)
+    TabPage* SelectedTab() const {
+        int i = Handle ? (int)SendMessageW(Handle, TCM_GETCURSEL, 0, 0) : -1;
+        return (i >= 0 && i < (int)pageList.size()) ? pageList[i] : nullptr;
+    }
     class HotTrackProp {
         Control* c;
     public:
@@ -2851,6 +3206,21 @@ public:
         }
         operator std::wstring() const { return c->Handle ? PicTable()[c->Handle].loc : std::wstring(); }
     } ImageLocation{ this };
+    // --- Faz 2.6: BorderStyle ---
+    class BorderStyleProp {
+        Control* c;
+    public:
+        explicit BorderStyleProp(Control* o) : c(o) {}
+        BorderStyleProp& operator=(M2God::BorderStyle b) {
+            if (!c->Handle) return *this;
+            switch (b) {
+            case M2God::BorderStyle::None:        RestyleWindow(c->Handle, 0, WS_BORDER, 0, WS_EX_CLIENTEDGE); break;
+            case M2God::BorderStyle::FixedSingle: RestyleWindow(c->Handle, WS_BORDER, 0, 0, WS_EX_CLIENTEDGE); break;
+            case M2God::BorderStyle::Fixed3D:     RestyleWindow(c->Handle, 0, WS_BORDER, WS_EX_CLIENTEDGE, 0); break;
+            }
+            return *this;
+        }
+    } BorderStyle{ this };
     // pictureBox1->Load(L"resim.png");  -> PNG/JPG/GIF/TIFF/BMP yukler, true = basarili
     bool Load(const std::wstring& path) {
         if (!Handle) return false;

@@ -31,6 +31,7 @@ static const Entry kMap[] = {
     { L"DateTimePicker",    L"SysDateTimePick32",  WS_TABSTOP | DTS_SHORTDATECENTURYFORMAT, WS_EX_CLIENTEDGE, 160, 28 , L"DTS_SHORTDATECENTURYFORMAT" },
     { L"MonthCalendar",     L"SysMonthCal32",      WS_TABSTOP, 0, 230, 180 , L"0" },
     { L"TabControl",        L"SysTabControl32",    WS_TABSTOP | WS_CLIPCHILDREN | TCS_TABS, WS_EX_CLIENTEDGE, 220, 150 , L"TCS_TABS" },
+    { L"TabPage",          L"M2GOD_TABPAGE",      0, 0, 0, 0 , L"0" },
     { L"StatusStrip",       L"msctls_statusbar32", 0, 0, 200, 24 , L"0" },
     { L"Panel",             L"M2GOD_PANEL",        0, WS_EX_CLIENTEDGE, 180, 120 , L"0" },
     { L"FlowLayoutPanel",   L"M2GOD_PANEL",        0, WS_EX_CLIENTEDGE, 200, 120 , L"0" },
@@ -121,12 +122,31 @@ LRESULT CALLBACK PictureProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     return DefWindowProcW(h, m, w, l);
 }
 
+// FAZ 2.6 — tasarım yüzeyi TabPage penceresi: BackColor boya + çerçeve yok (VS görünümü)
+LRESULT CALLBACK TabPageProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    if (m == WM_PAINT) {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+        RECT rc; GetClientRect(h, &rc);
+        Ctrl* c = g_model.FindByHwnd(h);
+        COLORREF back = RGB(255, 255, 255);
+        if (c) { COLORREF t; if (!ParseColor(c->Get(L"BackColor", L"Control"), t)) t = RGB(255,255,255); back = t; }
+        HBRUSH br = CreateSolidBrush(back);
+        FillRect(dc, &rc, br);
+        DeleteObject(br);
+        EndPaint(h, &ps);
+        return 0;
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+
 void RegisterCustomClasses(HINSTANCE hInst) {
     WNDCLASSW wc = { 0 };
     wc.hInstance = hInst; wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.lpfnWndProc = PanelProc; wc.hbrBackground = nullptr; wc.lpszClassName = L"M2GOD_PANEL";
     RegisterClassW(&wc);
     wc.lpfnWndProc = PictureProc; wc.lpszClassName = L"M2GOD_PICTURE";
+    RegisterClassW(&wc);
+    wc.lpfnWndProc = TabPageProc; wc.lpszClassName = L"M2GOD_TABPAGE";
     RegisterClassW(&wc);
     wc.lpfnWndProc = DefWindowProcW; wc.lpszClassName = L"M2GOD_PLACEHOLDER";
     RegisterClassW(&wc);
@@ -183,6 +203,30 @@ void ApplyProp(Ctrl* c, const std::wstring& prop, const std::wstring& value) {
     } else if (prop == L"MultiLine" || prop == L"Multiline") {
         // yeniden oluşturma gerektirir — yüzey halleder (MWM_PROPS_APPLIED)
     }
+    // FAZ 2.6: TabPage özellikleri — Text sekme başlığını da günceller
+    if (c->type == L"TabPage") {
+        if (prop == L"Text") {
+            if (h && IsWindow(h)) SetWindowTextW(h, value.c_str());
+            Ctrl* tab = c->parent;
+            if (tab && tab->hwnd && IsWindow(tab->hwnd)) {
+                auto pages = TabPagesOf(tab);
+                int idx = -1;
+                for (int i = 0; i < (int)pages.size(); i++) if (pages[i] == c) { idx = i; break; }
+                if (idx >= 0) {
+                    TCITEMW ti = { 0 };
+                    ti.mask = TCIF_TEXT;
+                    ti.pszText = (LPWSTR)value.c_str();
+                    SendMessageW(tab->hwnd, TCM_SETITEMW, (WPARAM)idx, (LPARAM)&ti);
+                }
+                SyncTabText(tab);
+            }
+            if (h && IsWindow(h)) InvalidateRect(h, nullptr, FALSE);
+        } else if (prop == L"BackColor" || prop == L"ForeColor") {
+            if (h && IsWindow(h)) InvalidateRect(h, nullptr, TRUE);
+        } else if (prop == L"Enabled") {
+            if (h && IsWindow(h)) EnableWindow(h, _wcsicmp(value.c_str(), L"true") == 0);
+        }
+    }
 }
 
 void ApplyAll(Ctrl* c) {
@@ -193,11 +237,20 @@ void ApplyAll(Ctrl* c) {
 }
 
 HWND CreateOnSurface(HWND surface, Ctrl* c) {
+    // FAZ 2.6: TabPage ZATEN yaratılmışsa yeniden yaratma — CreateOnSurface
+    // (TabControl sayfaları) + CreateBranch özyinelemesi çift çağrı yapar;
+    // çift HWND sızıntısı sayfa içi çocukların gizli pencereye düşmesine neden oluyordu
+    if (_wcsicmp(c->type.c_str(), L"TabPage") == 0 && c->hwnd && IsWindow(c->hwnd)) {
+        surface::PositionOne(surface, c);
+        return c->hwnd;
+    }
     Win32Class m = MapClass(c->type);
     if (m.cls.empty()) { c->nonVisual = true; return nullptr; }
     DWORD style = WS_CHILD | WS_CLIPSIBLINGS | m.style;
     // görünür/default prop'ları
     if (_wcsicmp(c->Get(L"Visible", L"True").c_str(), L"true") == 0) style |= WS_VISIBLE;
+    // FAZ 2.6: TabPage görünürlüğü tab seçimine göre yönetilir (hepsi birden açık olmaz)
+    if (_wcsicmp(c->type.c_str(), L"TabPage") == 0) style &= ~WS_VISIBLE;
     if (_wcsicmp(c->Get(L"Enabled", L"True").c_str(), L"true") == 0) style |= 0; else style |= WS_DISABLED;
     // Tip bazlı stil geçersiz kılmaları
     if (c->type == L"TextBox" && _wcsicmp(c->Get(L"MultiLine", L"False").c_str(), L"true") == 0)
@@ -233,11 +286,14 @@ HWND CreateOnSurface(HWND surface, Ctrl* c) {
             SendMessageW(h, LB_ADDSTRING, 0, (LPARAM)b);
         }
     } else if (c->type == L"TabControl") {
-        TCITEMW ti = { 0 }; ti.mask = TCIF_TEXT;
-        wchar_t b1[] = L"tabPage1", b2[] = L"tabPage2";
-        ti.pszText = b1; SendMessageW(h, TCM_INSERTITEMW, 0, (LPARAM)&ti);
-        ti.pszText = b2; SendMessageW(h, TCM_INSERTITEMW, 1, (LPARAM)&ti);
+        // FAZ 2.6: örnek sekmeler YOK — sayfalar gerçek TabPage Ctrl'leridir;
+        // CreateBranch/PlaceNew sayfa çocuklarını buradan sonra oluşturur
+        for (auto* pg : TabPagesOf(c)) CreateOnSurface(surface, pg);
+        UpdateTabPages(surface, c);
     }
+    // FAZ 2.6: sayfa penceresi görünür yaratılmaz — UpdateTabPages seçili sayfayı gösterir
+    if (_wcsicmp(c->type.c_str(), L"TabPage") == 0 && c->parent && c->parent->hwnd)
+        UpdateTabPages(surface, c->parent);
     // tasarım modu: fare mesajlarını yüzeye aktar (HTTRANSPARENT zincirlenir:
     // konteyner çocuğu → konteyner → yüzey)
     surface::SubclassForDesign(h);
@@ -247,6 +303,99 @@ HWND CreateOnSurface(HWND surface, Ctrl* c) {
     surface::PositionOne(surface, c);
     UpdateWindow(h);
     return h;
+}
+
+// ==================== FAZ 2.6: TabControl / TabPage yönetimi ====================
+
+// Sayfa HWND'lerinin dikdörtgenini TCM_ADJUSTRECT ile hesaplar; yalnız seçili
+// sayfayı gösterir; sayfa Ctrl geometrilerini senkronlar.
+void UpdateTabPages(HWND surf, Ctrl* tab) {
+    if (!tab || _wcsicmp(tab->type.c_str(), L"TabControl") != 0) return;
+    if (!tab->hwnd || !IsWindow(tab->hwnd)) return;
+    auto pages = TabPagesOf(tab);
+    // seçili sayfa (SelectedTab adı ile saklanır — kalıcı ve taşınabilir)
+    std::wstring selName = tab->Get(L"SelectedTab");
+    Ctrl* selPg = nullptr;
+    for (auto* p : pages)
+        if (_wcsicmp(p->name.c_str(), selName.c_str()) == 0) selPg = p;
+    if (!selPg && !pages.empty()) selPg = pages[0];
+    if (selPg) tab->props[L"SelectedTab"] = selPg->name;
+    // başlıkları sayfa başlıklarıyla eşitle (Faz 2.6: başlıklar sayfalardan gelir)
+    {
+        int cnt = (int)SendMessageW(tab->hwnd, TCM_GETITEMCOUNT, 0, 0);
+        if (cnt != (int)pages.size()) {
+            SendMessageW(tab->hwnd, TCM_DELETEALLITEMS, 0, 0);
+            int k = 0;
+            for (auto* p : pages) {
+                std::wstring t = p->Get(L"Text");
+                TCITEMW ti = { 0 };
+                ti.mask = TCIF_TEXT;
+                ti.pszText = (LPWSTR)t.c_str();
+                SendMessageW(tab->hwnd, TCM_INSERTITEMW, (WPARAM)k++, (LPARAM)&ti);
+            }
+            // başlık yeniden kuruldu → seçimi geri yükle
+            if (selPg) {
+                int idx = 0;
+                for (auto* p : pages) { if (p == selPg) break; idx++; }
+                SendMessageW(tab->hwnd, TCM_SETCURSEL, (WPARAM)idx, 0);
+            }
+        }
+    }
+    // görüntü alanı (tab client koordinatı)
+    RECT dr = { 0, 0, tab->w, tab->h };
+    SendMessageW(tab->hwnd, TCM_ADJUSTRECT, FALSE, (LPARAM)&dr);
+    if (dr.right <= dr.left || dr.bottom <= dr.top)
+        dr = { 2, 24, max(4, tab->w - 2), max(28, tab->h - 2) };
+    int x0 = max(0, (int)dr.left), y0 = max(0, (int)dr.top);
+    int x1 = min(tab->w, (int)dr.right), y1 = min(tab->h, (int)dr.bottom);
+    for (auto* p : pages) {
+        p->x = x0; p->y = y0;
+        p->w = max(4, x1 - x0); p->h = max(4, y1 - y0);
+        wchar_t b1[64], b2[64];
+        swprintf(b1, 64, L"%d, %d", p->x, p->y);
+        swprintf(b2, 64, L"%d, %d", p->w, p->h);
+        p->props[L"Location"] = b1;
+        p->props[L"Size"] = b2;
+        if (p->hwnd && IsWindow(p->hwnd)) {
+            SetWindowPos(p->hwnd, nullptr, p->x, p->y, p->w, p->h, SWP_NOZORDER | SWP_NOACTIVATE);
+            ShowWindow(p->hwnd, (p == selPg) ? SW_SHOWNA : SW_HIDE);
+        }
+    }
+    InvalidateRect(tab->hwnd, nullptr, TRUE);
+}
+
+// Seçili sayfayı öne çıkar (sekme şeridi tıklaması / koleksiyon editörü seçimi)
+void SelectTabPage(HWND surf, Ctrl* tab, Ctrl* page) {
+    if (!tab || !page || page->parent != tab) return;
+    tab->props[L"SelectedTab"] = page->name;
+    UpdateTabPages(surf, tab);
+}
+
+// Sekme şeridi hit-test: yüzey koordinatında nokta bir sekme başlığındaysa index
+int TabStripHitIndex(HWND surf, Ctrl* tab, int sx, int sy) {
+    if (!tab || !tab->hwnd || !IsWindow(tab->hwnd)) return -1;
+    POINT pt = { sx, sy };
+    MapWindowPoints(surf, tab->hwnd, &pt, 1);
+    TCHITTESTINFO hti = { 0 };
+    hti.pt = pt;
+    hti.flags = TCHT_ONITEM;
+    return (int)SendMessageW(tab->hwnd, TCM_HITTEST, 0, (LPARAM)&hti);
+}
+
+// Sekme şeridinin yüzey koordinatlarındaki rect'i (akıllı ok + hit-test için)
+bool TabStripRect(HWND surf, Ctrl* tab, RECT& out) {
+    if (!tab || !tab->hwnd || !IsWindow(tab->hwnd)) return false;
+    RECT outer = { 0, 0, tab->w, tab->h };
+    SendMessageW(tab->hwnd, TCM_ADJUSTRECT, TRUE, (LPARAM)&outer);
+    RECT disp = { 0, 0, tab->w, tab->h };
+    SendMessageW(tab->hwnd, TCM_ADJUSTRECT, FALSE, (LPARAM)&disp);
+    RECT r = { outer.left, outer.top, outer.right, disp.top };
+    if (r.bottom <= r.top) return false;
+    POINT tl = { r.left, r.top }, br = { r.right, r.bottom };
+    MapWindowPoints(tab->hwnd, surf, &tl, 1);
+    MapWindowPoints(tab->hwnd, surf, &br, 1);
+    out = { tl.x, tl.y, br.x, br.y };
+    return true;
 }
 
 } // namespace factory
