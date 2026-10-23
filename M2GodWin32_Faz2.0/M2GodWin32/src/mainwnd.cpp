@@ -28,6 +28,7 @@ static HWND s_wnd = nullptr, s_toolbar = nullptr, s_status = nullptr;
 static HWND s_toolbox = nullptr, s_props = nullptr, s_surface = nullptr;
 static std::wstring s_file;            // .m2god proje dosyası
 static Ctrl* s_clipboard = nullptr;
+static std::vector<Ctrl> s_clipPages;   // FAZ 2.6.1: kopyalanan TabControl'ün sayfaları
 static bool s_showToolbox = true, s_showProps = true, s_showGrid = true, s_showStatus = true;
 bool g_gridVisible = true;             // ızgara noktaları (surface çizer)
 static std::wstring pendingOpen;   // giriş ekranından gelecek .m2god/.cpp yolu
@@ -498,7 +499,7 @@ static int ShowWelcomeDialog(std::wstring& openPath) {
     EnsureDialogClass();
     int result = 0;
     HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"M2GOD_CODEDLG",
-        L"M2GodWin32 Faz 2.6 — Başlangıç", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        L"M2GodWin32 Faz 2.6.1 — Başlangıç", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         360, 200, 640, 420, nullptr, nullptr, g_hInst, nullptr);
     SetWindowLongW(dlg, GWL_STYLE, (GetWindowLongW(dlg, GWL_STYLE) & ~WS_MAXIMIZEBOX) | WS_CAPTION);
     HWND hint = CreateWindowExW(0, L"STATIC",
@@ -897,16 +898,39 @@ static LRESULT CALLBACK FrameProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         case CMD_UNDO: g_model.Undo(); surface::RecreateAll(s_surface); props::Refresh(s_props); InvalidateRect(s_surface, nullptr, TRUE); return 0;
         case CMD_REDO: g_model.Redo(); surface::RecreateAll(s_surface); props::Refresh(s_props); InvalidateRect(s_surface, nullptr, TRUE); return 0;
         case CMD_CUT:
-            if (g_model.selected) { delete s_clipboard; s_clipboard = new Ctrl(*g_model.selected); s_clipboard->hwnd = nullptr; g_model.Delete(g_model.selected); surface::RecreateAll(s_surface); props::Refresh(s_props); InvalidateRect(s_surface, nullptr, TRUE); PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0); }
+            // FAZ 2.6.1: kesmede de sayfalar kopyaya alınır
+            if (g_model.selected) {
+                delete s_clipboard; s_clipboard = new Ctrl(*g_model.selected); s_clipboard->hwnd = nullptr;
+                s_clipPages.clear();
+                if (_wcsicmp(g_model.selected->type.c_str(), L"TabControl") == 0)
+                    for (auto* pg : TabPagesOf(g_model.selected)) s_clipPages.push_back(*pg);
+                g_model.Delete(g_model.selected); surface::RecreateAll(s_surface); props::Refresh(s_props); InvalidateRect(s_surface, nullptr, TRUE); PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0);
+            }
             return 0;
         case CMD_COPY:
-            if (g_model.selected) { delete s_clipboard; s_clipboard = new Ctrl(*g_model.selected); s_clipboard->hwnd = nullptr; Status(L"Kopyalandı: " + s_clipboard->name); }
+            // FAZ 2.6.1: TabControl kopyalanırken sayfaları da taşınır (VS davranışı)
+            if (g_model.selected) {
+                delete s_clipboard; s_clipboard = new Ctrl(*g_model.selected); s_clipboard->hwnd = nullptr;
+                s_clipPages.clear();
+                if (_wcsicmp(g_model.selected->type.c_str(), L"TabControl") == 0)
+                    for (auto* pg : TabPagesOf(g_model.selected)) s_clipPages.push_back(*pg);
+                Status(L"Kopyalandı: " + s_clipboard->name);
+            }
             return 0;
         case CMD_PASTE:
             if (s_clipboard) {
                 g_model.PushUndo();
                 Ctrl* c = g_model.Clone(s_clipboard, GRID_SIZE * 2, GRID_SIZE * 2);
                 if (c) {
+                    // FAZ 2.6.1: kopyadaki sayfalar yeni TabControl'e eklenir
+                    for (auto& pg : s_clipPages) {
+                        Ctrl* np = g_model.AddPage(c, pg.Get(L"Text", L""));
+                        if (np) {
+                            np->x = pg.x; np->y = pg.y; np->w = pg.w; np->h = pg.h;
+                            np->props = pg.props;
+                            np->props[L"Name"] = np->name;
+                        }
+                    }
                     factory::CreateOnSurface(s_surface, c);
                     g_model.selected = c; g_model.formSelected = false;
                     props::Refresh(s_props); InvalidateRect(s_surface, nullptr, FALSE);
@@ -946,11 +970,11 @@ static LRESULT CALLBACK FrameProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         case CMD_VIEW_GRID: s_showGrid = !s_showGrid; g_gridVisible = s_showGrid; InvalidateRect(s_surface, nullptr, TRUE); return 0;
         case CMD_VS_CONNECT: ShowConnectDialog(h); return 0;
         case CMD_ESC_CANCEL:
-            if (!toolbox::ArmedType().empty()) {
-                toolbox::Disarm();
-                Status(L"Yerleştirme iptal edildi (ESC)");
+            // FAZ 2.6.1: ESC zinciri surface tarafında — sürükleme iptali,
+            // yerleştirme iptali, üst kontrole yürüyüş (sayfa→TabControl),
+            // seçim kaldırma. Hızlandırıcı her odakta buraya taşır.
+            if (!surface::EscapeChain())
                 InvalidateRect(s_surface, nullptr, FALSE);
-            }
             return 0;
         case CMD_VS_DISCONNECT: vsint::Disconnect(); return 0;
         case CMD_VS_SYNC: props::ApplyPending(s_props); vsint::SyncToProject(nullptr, L"", nullptr); return 0;
@@ -959,7 +983,7 @@ static LRESULT CALLBACK FrameProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             return 0;
         case CMD_ABOUT:
             MessageBoxW(h,
-                L"M2GodWin32 — Faz 2.6 God Mode MVP\n\n"
+                L"M2GodWin32 — Faz 2.6.1 God Mode MVP\n\n"
                 L"Win32 API Görsel Form Tasarımcısı\n"
                 L"• Config_info.json kataloğu ile tüm .NET elemanları\n"
                 L"• Sürükle-bırak VE tıkla-yerleştir (ESC = iptal)\n"
@@ -984,7 +1008,7 @@ L"  pictureBox1->Image = M2God::Image::FromFile(L\"resim.png\");  // PNG/JPG/GIF
                 L"• Olay yönlendirme: WM_NOTIFY/WM_HSCROLL + DoubleClick/TextChanged/\n"
                 L"  ItemCheck/AfterSelect/Scroll/ValueChanged + form Mouse/Key olayları\n"
                 L"•MenuStrip/ContextMenuStrip gerçek HMENU + ItemClick\n\n"
-                L"Faz 2.6 yenilikleri (TabControl/TabPage koleksiyonu + tam kapsam):\n"
+                L"Faz 2.6.1 yenilikleri (TabControl/TabPage koleksiyonu + tam kapsam + Escape üst seçim):\n"
                 L"• Sekme şeridine tıkla → tabPage seçilir (VS davranışı)\n"
                 L"• Seçili TabControl'de sağ üstte AKILLI OK: Sekme Ekle / Sekme Kaldır\n"
                 L"• Özellikler panelinde TabPages → Koleksiyon Düzenleyici (Ekle/Kaldır/\n"
@@ -1004,7 +1028,7 @@ L"  pictureBox1->Image = M2God::Image::FromFile(L\"resim.png\");  // PNG/JPG/GIF
     case MWM_MODEL_CHANGED:
         g_modelDirty = true;
         {
-            std::wstring t = L"M2GodWin32 Faz 2.6";
+            std::wstring t = L"M2GodWin32 Faz 2.6.1";
             if (!s_file.empty()) t += L" — " + GetFileName(s_file) + (g_modelDirty ? L" *" : L"");
             SetWindowTextW(h, t.c_str());
         }
@@ -1020,7 +1044,7 @@ L"  pictureBox1->Image = M2God::Image::FromFile(L\"resim.png\");  // PNG/JPG/GIF
                     SYSTEMTIME st; GetLocalTime(&st);
                     wchar_t tb[64]; swprintf(tb, 64, L"%02d:%02d:%02d", st.wHour, st.wMinute, st.wSecond);
                     Status(std::wstring(L"Otomatik kaydedildi: ") + GetFileName(s_file) + L"  " + tb);
-                    std::wstring t = L"M2GodWin32 Faz 2.6 — " + GetFileName(s_file);
+                    std::wstring t = L"M2GodWin32 Faz 2.6.1 — " + GetFileName(s_file);
                     SetWindowTextW(h, t.c_str());
                 }
             }
@@ -1117,7 +1141,7 @@ int Run(HINSTANCE hInst, LPWSTR cmdLine) {
     wc.lpszClassName = L"M2GOD_MAIN";
     wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(1));
     RegisterClassW(&wc);
-    HWND h = CreateWindowExW(0, L"M2GOD_MAIN", L"M2GodWin32 Faz 2.6 — God Mode MVP",
+    HWND h = CreateWindowExW(0, L"M2GOD_MAIN", L"M2GodWin32 Faz 2.6.1 — God Mode MVP",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         8, 8, 1424, 856, nullptr, nullptr, hInst, nullptr);
     g_hMain = h;

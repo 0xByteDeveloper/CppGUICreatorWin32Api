@@ -1,12 +1,40 @@
-# M2GodWin32 — Faz 2.6 God Mode MVP
+# M2GodWin32 — Faz 2.6.1 God Mode MVP
 
 **Visual Studio 2019 C++ CLR Form Designer deneyimini Win32 API ile yaşatan, tam kapsamlı görsel UI tasarım ortamı.**
 
-> Bu proje `CppGUICreatorWin32Api` deposunun **Faz 2.6** geliştirme aşamasıdır.
+> Bu proje `CppGUICreatorWin32Api` deposunun **Faz 2.6.1** geliştirme aşamasıdır.
 > Katalog kaynağı olarak depodaki **Config_info.json** (.NET Framework WinForms tam eleman kataloğu: 144 eleman, tüm property'ler + event'ler + 203 enum) kullanılır.
 
 
 ---
+
+## Faz 2.6.1 — Kritik düzeltmeler: ESC zinciri + model yükleme çift-sayfa bug'ı + panoda sayfa taşıma
+
+Kapsamlı denetim sırasında yakalanan ve **üretilen kodu bozabilen** üç kusur giderildi:
+
+1. **ESC artık gerçekten VS gibi çalışır (her odakta).** Hızlandırıcı tablosu `VK_ESCAPE`'i
+   `CMD_ESC_CANCEL`'a taşıdığı için yüzeyin kendi `WM_KEYDOWN`'ı Escape'i hiç görmüyordu —
+   yalnızca yerleştirme iptali çalışıyordu. Yeni `surface::EscapeChain()` zinciri:
+   **sürükleme iptali → yerleştirme iptali → seçimi ÜST KONTROLE yürüt (sayfa→TabControl,
+   iç kontrol→GroupBox/Panel) → seçimi kaldır (form)**. Sayfa seçiliyken ESC artık
+   TabControl'ü seçer; akıllı ok ve tutamaçlar geri gelir.
+
+2. **KRİTİK: model yükleme çift-sayfa bug'ı.** `Model::FromJson` içindeki `Add(type, 20, 20)`
+   çağrısı `autoPages=true` ile çalışıyordu: İptal (koleksiyon düzenleyici), Aç, Geri Al/Yinele
+   ve VS'den bağlanma yükleme yollarının HEPSİNDE TabControl'e otomatik tabPage1+tabPage2
+   ekleniyor, JSON'daki gerçek sayfalarla BİRLİKTE **yetim sayfa Ctrl'leri** bırakıyordu.
+   Sonuç: üretilen kodda kopya `TabPages->Add`, kopya `M2God::TabPage*` bildirimleri ve
+   **enum çift tanımı (derleme hatası)**. Düzeltme: FromJson artık autoPages oluşturmaz;
+   eski format (Text satırlı) dosyalar mevcut MİGRASYON bloğuyla aynen desteklenir.
+   Birim testi: `Add(2 sayfa) → ToJson → FromJson → 3 ctrl (1 tab + 2 sayfa)` OK.
+
+3. **Kopyala/Kes/Yapıştır artık sayfaları da taşır.** TabControl kopyalanıp yapıştırıldığında
+   sayfaları (Text/BackColor/Enabled/ToolTip + geometri) yeni kontrole eklenir (VS davranışı).
+
+**Doğrulama:** tasarım akışı (yerleştir → sayfa seç → ESC ile üst seçim → akıllı ok → koleksiyon
+düzenleyici → Ekle → İptal geri alması → Kod Üret) uçtan uca çalışır; üretilen proje
+**C++14 ve C++17 ile 0 hata**; üretilen uygulama wine altında TabControl sayfa geçişiyle canlı
+çalışır (EkranGoruntuleri_Faz2.6.1/).
 
 ## Faz 2.6 — TabControl/TabPage koleksiyonu (VS davranışı) + tam kapsam emisyonu
 

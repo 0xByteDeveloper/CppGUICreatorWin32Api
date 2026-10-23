@@ -38,4 +38,10 @@ void PlaceNew(HWND surf, const std::wstring& type, int sx, int sy);
 // (veya atasının) üzerindeyse sürükleme durumunu güvenle kapatır.
 void OnModelDelete(Ctrl* c);
 
+// FAZ 2.6.1 — VS davranışı ESC zinciri (HER ODAKTA çalışır; hızlandırıcı
+// CMD_ESC_CANCEL buraya yönlendirir): aktif sürüklemeyi iptal → yerleştirme
+// modunu iptal → seçimi ÜST KONTROLE yürüt (sayfa→TabControl, iç→konteyner)
+// → seçimi kaldır (form). Bir şey yapıldıysa true döner.
+bool EscapeChain();
+
 } // namespace surface

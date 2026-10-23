@@ -498,6 +498,43 @@ static void RepaintAll(HWND surf) {
 }
 
 // aktif sürükleme kontrolünü güvenle iptal et (silme/undo sırasında çağrılır)
+// FAZ 2.6.1 — VS davranışı ESC zinciri. Hızlandırıcı tablosu VK_ESCAPE'ı
+// CMD_ESC_CANCEL'a taşıdığı için surface'ın kendi WM_KEYDOWN'ı Escape'i
+// GÖRMEZ; zincir burada yaşar ve her odaktan çalışır.
+bool EscapeChain() {
+    // 1) aktif sürüklemeyi iptal et: başlangıç konumuna dön
+    if (s_drag) {
+        Ctrl* d = s_drag;
+        DragLayerHide();
+        s_drag = nullptr; s_dragMode = 0; s_started = false;
+        d->x = s_startRect.left; d->y = s_startRect.top;
+        wchar_t b[64]; swprintf(b, 64, L"%d, %d", d->x, d->y);
+        d->props[L"Location"] = b;
+        if (d->hwnd && IsWindow(d->hwnd)) { PositionOne(s_surf, d); ShowWindow(d->hwnd, SW_SHOWNA); }
+        RepaintAll(s_surf);
+        NotifySelChanged();
+        Status(L"Taşıma iptal edildi");
+        return true;
+    }
+    // 2) tıkla-yerleştir modunu iptal et
+    if (!toolbox::ArmedType().empty()) { toolbox::Disarm(); Status(L"Yerleştirme iptal edildi"); RepaintAll(s_surf); return true; }
+    // 3) VS davranışı: seçimi ÜST KONTROLE yürüt (sayfa → TabControl, iç → konteyner)
+    if (g_model.selected && g_model.selected->parent) {
+        Ctrl* up = g_model.selected->parent;
+        g_model.selected = up; g_model.formSelected = false;
+        NotifySelChanged(); RepaintAll(s_surf);
+        Status(up->name + L" seçildi");
+        return true;
+    }
+    // 4) seçimi kaldır (form seçili olur)
+    if (g_model.selected) {
+        g_model.selected = nullptr; g_model.formSelected = true;
+        NotifySelChanged(); RepaintAll(s_surf);
+        return true;
+    }
+    return false;
+}
+
 void OnModelDelete(Ctrl* c) {
     if (!s_drag) return;
     if (s_drag == c || g_model.IsAncestorOf(c, s_drag) || g_model.IsAncestorOf(s_drag, c)) {
@@ -960,23 +997,10 @@ LRESULT CALLBACK SurfaceProc(HWND surf, UINT msg, WPARAM wp, LPARAM lp) {
         bool ctrl = GetKeyState(VK_CONTROL) & 0x8000;
         int step = s_gridSnap ? GRID_SIZE : 1;
         if (wp == VK_ESCAPE) {
-            // 1) aktif sürüklemeyi iptal et: başlangıç konumuna dön
-            if (s_drag) {
-                Ctrl* d = s_drag;
-                DragLayerHide();
-                s_drag = nullptr; s_dragMode = 0; s_started = false;
-                d->x = s_startRect.left; d->y = s_startRect.top;
-                wchar_t b[64]; swprintf(b, 64, L"%d, %d", d->x, d->y);
-                d->props[L"Location"] = b;
-                if (d->hwnd && IsWindow(d->hwnd)) { PositionOne(surf, d); ShowWindow(d->hwnd, SW_SHOWNA); }
-                RepaintAll(surf);
-                NotifySelChanged();
-                Status(L"Taşıma iptal edildi");
-                return 0;
-            }
-            if (!toolbox::ArmedType().empty()) { toolbox::Disarm(); Status(L"Yerleştirme iptal edildi"); return 0; }
-            g_model.selected = nullptr; g_model.formSelected = true;
-            NotifySelChanged(); InvalidateRect(surf, nullptr, FALSE); return 0;
+            // FAZ 2.6.1: zincir hızlandırıcı üzerinden de çağrılır (CMD_ESC_CANCEL);
+            // burada yalnızca odak doğrudan yüzeydeyse çalışır
+            EscapeChain();
+            return 0;
         }
         if (wp == VK_DELETE) { PostMessageW(g_hMain, WM_COMMAND, MAKEWPARAM(M2CMD_DELETE, 0), 0); return 0; }
         if (wp == 'Z' && ctrl) { g_model.Undo(); RecreateAll(surf); NotifySelChanged(); InvalidateRect(surf, nullptr, TRUE); PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0); return 0; }

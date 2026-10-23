@@ -337,7 +337,13 @@ bool Model::FromJson(const json::Value& v) {
         for (auto& o : arr.arr) {
             std::wstring type = o.Get(L"type").AsStr();
             if (!g_catalog.Find(type)) continue;
-            Ctrl* c = Add(type, 20, 20);
+            // FAZ 2.6.1 DÜZELTME: autoPages YASAK — JSON zaten gerçek sayfa
+            // Ctrl'lerini içerir; otomatik tabPage1/tabPage2 eklenmesi ÇİFT
+            // sayfa + yetim Ctrl üretiyordu (İptal/Aç/Geri Al yüklemelerinde
+            // üretilen kodda kopya TabPages->Add + enum çift tanımı).
+            // Eski format (Text satırlı) dosyalar için aşağıdaki MİGRASYON
+            // bloğu sayfaları üretir.
+            Ctrl* c = Add(type, 20, 20, nullptr, false);
             if (!c) continue;
             c->name = o.Get(L"name").AsStr(c->name);
             parentNameOf[c->name] = o.Get(L"Parent").AsStr();
