@@ -158,6 +158,23 @@ bool Catalog::Load(const std::wstring& configPath) {
     }
     if (!loaded) { AddBuiltin(); return false; }
 
+    // Faz 2.5: bileşenlerin winClass'ını temizle — nonVisual=true olur
+    // (tasarımda tepsiye düşer; üretilen kodda SDK sarmalayıcısı kullanılır)
+    static const wchar_t* kComps[] = {
+        L"Timer", L"BackgroundWorker", L"BindingSource", L"BindingNavigator",
+        L"FileSystemWatcher", L"SerialPort", L"Process", L"DirectoryEntry",
+        L"DirectorySearcher", L"EventLog", L"MessageQueue", L"PerformanceCounter",
+        L"ServiceController", L"ErrorProvider", L"HelpProvider", L"ImageList",
+        L"NotifyIcon", L"OpenFileDialog", L"SaveFileDialog", L"FolderBrowserDialog",
+        L"FontDialog", L"ColorDialog", L"PrintDialog", L"PrintPreviewDialog",
+        L"PageSetupDialog", L"DataSet", L"DataView", L"DataColumn", L"DataTable",
+    };
+    for (auto& kv : elements) {
+        for (auto* cp : kComps) {
+            if (_wcsicmp(kv.first.c_str(), cp) == 0) { kv.second.winClass.clear(); break; }
+        }
+    }
+
     // Timer bileşenine Interval/Enabled özellikleri garanti edilir (Faz 2.4:
     // üretilen kod SetTimer/WM_TIMER kullanır; panelde Interval/Enabled görünür)
     auto tit = elements.find(L"Timer");

@@ -8,6 +8,57 @@
 
 ---
 
+## Faz 2.5 — TAM KAPSAMLI M2God SDK (Global.h v2500)
+
+Config_info.json'daki **tüm** toolbox elemanları artık üretilen projede nesne sözdizimiyle kullanılabiliyor. Global.h ~3200 satırlık header-only SDK:
+
+### Kontroller (tasarım özellikleri de koda taşınıyor)
+- **TextBox/MaskedTextBox**: ReadOnly, PasswordChar, MaxLength, TextAlign, CharacterCasing, UseSystemPasswordChar, WordWrap + AppendText/Clear/Copy/Cut/Paste/Undo/SelectAll
+- **NumericUpDown**: gerçek EDIT+msctls_updown32 — Value/Minimum/Maximum/Increment/ReadOnly/UpButton/DownButton
+- **RichTextBox**: RTF SaveFile/LoadFile (EM_STREAM), SelectionColor, SelectedText, Undo/Redo, BackColor (EM_SETBKCOLOR)
+- **ComboBox**: Items->Add/AddRange/Insert/RemoveAt/IndexOf/Contains, SelectedIndex, SelectedItem, DropDownStyle, DroppedDown, MaxLength, BeginUpdate/EndUpdate
+- **ListBox**: Items API + SelectionMode, TopIndex, ItemHeight, GetSelected/SetSelected/ClearSelected
+- **CheckedListBox**: SysListView32 (LVS_LIST+checkboxes) — Items->Add, SetItemChecked/GetItemChecked, CheckedItemCount
+- **ListView**: Columns->Add(title,width), Items->Add(text,sub), SetSub, View/CheckBoxes/GridLines/FullRowSelect/HeaderStyle, EnsureVisible, item checkbox
+- **TreeView**: Nodes->Add/AddChild/RemoveAt/ExpandAll, SelectedIndex/SelectedText, CheckBoxes + SetItemChecked, ShowLines/HotTracking/Indent
+- **ProgressBar**: Value/Minimum/Maximum/Step, PerformStep/Increment, Style (Marquee)
+- **TrackBar**: Value/Minimum/Maximum/TickFrequency/SmallChange/LargeChange/TickStyle/SetRange
+- **HScrollBar/VScrollBar**: Value/Minimum/Maximum/SmallChange/LargeChange (SetScrollInfo)
+- **DateTimePicker**: Value (M2DateTime), Format (Long/Short/Time/Custom), CustomFormat, Checked
+- **MonthCalendar**: SetDate, MaxSelectionCount, TitleBackColor/TitleForeColor/TrailingForeColor, FirstDayOfWeek
+- **TabControl**: Pages/TabPages->Add/Insert/RemoveAt, SelectedIndex, HotTrack (Text satırları sayfa olur)
+- **StatusStrip**: Parts/Items->Add/SetText/Clear (SB_SETPARTS ile düzgün parçalar)
+- **MenuStrip/ToolStrip**: gerçek HMENU — Items->Add/AddChild + Apply() + ItemClick (WndProc DispatchCommand)
+- **ContextMenuStrip**: Items API + Show(x,y) (TrackPopupMenu) + ItemClick
+- **Panel**: BorderStyle (FixedSingle/Fixed3D/None yeniden stillenir)
+- **PictureBox**: özel M2GOD_PIC sınıfı — Load(path), Image (HBITMAP), ImageLocation, SizeMode (Normal/StretchImage/AutoSize/CenterImage/Zoom)
+- **Label/LinkLabel/Button/CheckBox/RadioButton/GroupBox**: TextAlign (ContentAlignment), BorderStyle, AutoEllipsis, FlatStyle, CheckState (Indeterminate), PerformClick
+
+### Bileşenler ve diyaloglar (görsel olmayan ama GERÇEK çalışan)
+- **OpenFileDialog/SaveFileDialog**: Filter/FileName/Title/InitialDirectory/Multiselect, ShowDialog() → M2God::DialogResult::OK
+- **ColorDialog**: Color/FullOpen (ChooseColorW), **FontDialog**: Font/FontName/FontSize (ChooseFontW)
+- **FolderBrowserDialog**: SelectedPath/Description (SHBrowseForFolderW)
+- **NotifyIcon**: Icon/Text/Visible/BalloonTip + ShowBalloonTip, Click/DoubleClick (WM_APP+0x4E1 yönlendirmesi)
+- **ToolTip**: SetToolTip(control, text), Active, InitialDelay/AutoPopDelay/ReshowDelay, ToolTipTitle
+- **BackgroundWorker**: DoWork/ProgressChanged/RunWorkerCompleted (std::function), RunWorkerAsync/ReportProgress/CancelAsync — gerçek thread
+- **Process**: FileName/Arguments/Start/WaitForExit/ExitCode/Kill + statik Process::Start(L"notepad.exe")
+- **SerialPort**: PortName/BaudRate/Open/Close/Write/WriteLine/ReadExisting (CreateFileW COM)
+
+### Form API, enumlar, renkler
+- **M2God::Form**: Handle/Text/ClientSize/BackColor/TopMost/Opacity(0-100)/WindowState/MaximizeBox/MinimizeBox/ControlBox/FormBorderStyle/Close/Activate/CenterToScreen
+- **M2God::Color**: 30+ sabit (Red, Lime, Navy, LightGray, Transparent...) + FromArgb
+- **enum class'lar** (WinForms değerleri): ComboBoxStyle, View, SortOrder, PictureBoxSizeMode, ProgressBarStyle, DateTimePickerFormat, SelectionMode, CharacterCasing, ScrollBars, HeaderStyle, ContentAlignment, MessageBoxButtons/Icon, DialogResult, FormBorderStyle/StartPosition/WindowState, Keys, RichTextBoxStreamType...
+- **MsgBox(text, caption, buttons, icon)** → DialogResult
+- **Point/Size/Rectangle/M2DateTime** yapıları; Location/Size/Width/Height/Left/Top/Right/Bottom property'leri; Focus/Refresh/BringToFront/SendToBack/SetBounds
+
+### Olay yönlendirme genişletildi
+- WM_COMMAND: Click/DoubleClick/TextChanged/SelectedIndexChanged/ValueChanged (STN_CLICKED, LBN_DBLCLK, CBN_DBLCLK, CBN_EDITCHANGE dahil)
+- **WM_NOTIFY** (yeni): ListView/CheckedListBox → LVN_ITEMCHANGED (SelectedIndexChanged + ItemCheck), TreeView → TVN_SELCHANGED (AfterSelect), TabControl → TCN_SELCHANGE, DateTimePicker → DTN_DATETIMECHANGE
+- **WM_HSCROLL/WM_VSCROLL** (yeni): TrackBar/ScrollBar → Scroll + ValueChanged
+- **Form olayları** (yeni): Shown, Resize, FormClosing, FormClosed, Activated, MouseMove/MouseDown/MouseUp/Click, KeyDown/KeyUp/KeyPress
+- Yaratım sırası bildirim koruması: `M2God::InitDone()` — InitializeControls bitmeden hiçbir handler çağrılmaz (zincirleme EN_CHANGE çökmesi kökünden giderildi)
+- Form tasarım özellikleri wWinMain'e taşınır: StartPosition=CenterScreen, MaximizeBox/MinimizeBox/ControlBox, FormBorderStyle, TopMost, WindowState
+
 ## Faz 2.3 — Yenilikler (kullanıcı geri bildirimi üzerine)
 
 | Düzeltme / Yeni Özellik | Ayrıntı |

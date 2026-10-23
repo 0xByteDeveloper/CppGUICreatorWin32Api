@@ -42,7 +42,7 @@ static std::wstring M2TypeOf(const std::wstring& type) {
         { L"GroupBox", L"GroupBox" }, { L"Label", L"Label" }, { L"LinkLabel", L"Label" },
         { L"TextBox", L"TextBox" }, { L"MaskedTextBox", L"TextBox" }, { L"NumericUpDown", L"NumericUpDown" },
         { L"RichTextBox", L"RichTextBox" }, { L"ComboBox", L"ComboBox" },
-        { L"ListBox", L"ListBox" }, { L"CheckedListBox", L"ListBox" },
+        { L"ListBox", L"ListBox" }, { L"CheckedListBox", L"CheckedListBox" },
         { L"ListView", L"ListView" }, { L"TreeView", L"TreeView" },
         { L"ProgressBar", L"ProgressBar" }, { L"TrackBar", L"TrackBar" },
         { L"HScrollBar", L"HScrollBar" }, { L"VScrollBar", L"VScrollBar" },
@@ -50,692 +50,144 @@ static std::wstring M2TypeOf(const std::wstring& type) {
         { L"TabControl", L"TabControl" }, { L"StatusStrip", L"StatusStrip" },
         { L"Panel", L"Panel" }, { L"FlowLayoutPanel", L"Panel" }, { L"TableLayoutPanel", L"Panel" },
         { L"SplitContainer", L"Panel" }, { L"PictureBox", L"PictureBox" },
+        { L"LinkLabel", L"LinkLabel" }, { L"MenuStrip", L"MenuStrip" },
+        { L"ToolStrip", L"MenuStrip" }, { L"ContextMenuStrip", L"ContextMenuStrip" },
     };
     for (auto& m : map) if (_wcsicmp(m.a, type.c_str()) == 0) return m.b;
     return L"Placeholder";
 }
 
-const char* GlobalVersionMark() { return "M2GOD-GLOBAL v2402"; }
+// Faz 2.5: görsel olmayan bileşenler için Global.h sarmalayıcısı (yoksa boş)
+static std::wstring M2ComponentTypeOf(const std::wstring& type) {
+    struct M { const wchar_t* a; const wchar_t* b; };
+    static const M map[] = {
+        { L"NotifyIcon", L"NotifyIcon" }, { L"ToolTip", L"ToolTip" },
+        { L"BackgroundWorker", L"BackgroundWorker" }, { L"Process", L"Process" },
+        { L"SerialPort", L"SerialPort" },
+        { L"OpenFileDialog", L"OpenFileDialog" }, { L"SaveFileDialog", L"SaveFileDialog" },
+        { L"ColorDialog", L"ColorDialog" }, { L"FontDialog", L"FontDialog" },
+        { L"FolderBrowserDialog", L"FolderBrowserDialog" },
+    };
+    for (auto& m : map) if (_wcsicmp(m.a, type.c_str()) == 0) return m.b;
+    return L"";
+}
+
+const char* GlobalVersionMark() { return "M2GOD-GLOBAL v2500"; }
 
 // ============================================================================
-//  Global.h şablonu — M2God nesne sarmalayıcı kütüphanesi (header-only)
-//  Kullanıcı olay kodlarında: timer1->Enabled = false; button1->Text = L"Hi";
+//  Global.h şablonu — M2God TAM KAPSAMLI SDK (Faz 2.5)
+//  Şablon ayrı dosyada: src/global_template.inc (M2GOD-GLOBAL v2500)
+//  Config_info.json'daki tüm kontroller/bileşenler/diyaloglar + enumlar + Color
 // ============================================================================
 std::wstring GenerateGlobalH() {
-    static const char kTemplate[] = R"M2GODGLOBAL(
-// ============================================================================
-//  Global.h — M2GodWin32 UI Designer (Faz 2.4) nesne sarmalayıcı kutuphanesi
-//  M2GOD-GLOBAL v2402
-//  !! BU DOSYAYI DUZENLEMEYIN — tasarimci gerektiginde gunceller.
-//  Amac: Form1 olay kodlarinda WinForms benzeri sozdizimi (saf Win32 uzerinde):
-//      timer1->Enabled = false;                 // Timer durdurur
-//      timer1->Enabled = true;                  // Timer baslatir
-//      timer1->Interval = 500;                  // ms
-//      button1->Text = L"Merhaba";
-//      button1->Enabled = false;  button1->Visible = false;
-//      textBox1->Text = button1->Text;
-//      comboBox1->Items->Add(L"Secenek");
-//      checkBox1->Checked = true;
-//  HWND gerekirse: button1->Handle
-//  Derleme: VS2019 C++17 — ek kutuphane gerekmez (header-only).
-// ============================================================================
-#pragma once
-#include <windows.h>
-#include <commctrl.h>
-#include <richedit.h>
-#include <cstdio>
-#include <string>
-#include <map>
-#include <initializer_list>
-#include <type_traits>
-
-namespace M2God {
-
-// dize birleştirme: L"Selim: " + comboBox1->Items->SelectedItem gibi
-// property nesneleri de dogal sozdizimiyle birlestirilebilsin (ADL icin M2God'da)
-template <typename T, typename = std::enable_if_t<std::is_class_v<T> && std::is_convertible_v<const T&, std::wstring>>>
-inline std::wstring operator+(const wchar_t* a, const T& b) {
-    return std::wstring(a) + (std::wstring)b;
-}
-
-// ---- UI fontu --------------------------------------------------------------
-inline HFONT GetUIFont() {
-    static HFONT f = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    return f;
-}
-// Ozel font: M2God::MakeFont(L"Tahoma", 10, true)
-inline HFONT MakeFont(const wchar_t* name, int pt, bool bold = false,
-                      bool italic = false, bool underline = false) {
-    HDC dc = GetDC(nullptr);
-    int hgt = -MulDiv(pt > 0 ? pt : 9, GetDeviceCaps(dc, LOGPIXELSY), 72);
-    ReleaseDC(nullptr, dc);
-    return CreateFontW(hgt, 0, 0, 0, bold ? FW_BOLD : FW_NORMAL,
-        italic ? TRUE : FALSE, underline ? TRUE : FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, name);
-}
-
-// ---- renk kayit defteri (BackColor/ForeColor WM_CTLCOLOR* ile uygulanir) ----
-struct ColorInfo { COLORREF back = 0xFFFFFFFF; COLORREF fore = 0xFFFFFFFF; };
-inline ColorInfo& CtrlColorInfo(HWND h) {
-    static std::map<HWND, ColorInfo> tbl;
-    return tbl[h];
-}
-// Form1_WndProc icindeki WM_CTLCOLORSTATIC/WM_CTLCOLOREDIT/... case'lerinden cagrilir
-inline LRESULT HandleCtlColor(HWND ctrl, HDC dc) {
-    ColorInfo ci = CtrlColorInfo(ctrl);
-    bool hasBack = (ci.back != 0xFFFFFFFF), hasFore = (ci.fore != 0xFFFFFFFF);
-    if (!hasBack && !hasFore) return 0;
-    if (hasFore) SetTextColor(dc, ci.fore);
-    if (hasBack) {
-        SetBkColor(dc, ci.back);
-        static std::map<HWND, HBRUSH> brushes;
-        auto it = brushes.find(ctrl);
-        if (it == brushes.end()) {
-            HBRUSH b = CreateSolidBrush(ci.back);
-            brushes[ctrl] = b;
-            return (LRESULT)b;
-        }
-        return (LRESULT)it->second;
-    }
-    SetBkMode(dc, TRANSPARENT);
-    return (LRESULT)GetStockObject(HOLLOW_BRUSH);
-}
-
-// ---- yardimci sinif kayitlari ----------------------------------------------
-inline LRESULT CALLBACK M2PanelProc(HWND h, UINT m, WPARAM w, LPARAM l) {
-    if (m == WM_ERASEBKGND) {
-        HDC dc = (HDC)w; RECT rc; GetClientRect(h, &rc);
-        ColorInfo ci = CtrlColorInfo(h);
-        COLORREF c = (ci.back != 0xFFFFFFFF) ? ci.back : RGB(255, 255, 255);
-        HBRUSH br = CreateSolidBrush(c); FillRect(dc, &rc, br); DeleteObject(br);
-        return 1;
-    }
-    if (m == WM_PAINT) {
-        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
-        RECT rc; GetClientRect(h, &rc);
-        ColorInfo ci = CtrlColorInfo(h);
-        COLORREF c = (ci.back != 0xFFFFFFFF) ? ci.back : RGB(255, 255, 255);
-        HBRUSH br = CreateSolidBrush(c); FillRect(dc, &rc, br); DeleteObject(br);
-        wchar_t buf[256]; int n = GetWindowTextW(h, buf, 256);
-        if (n > 0) {
-            SetBkMode(dc, TRANSPARENT);
-            if (ci.fore != 0xFFFFFFFF) SetTextColor(dc, ci.fore);
-            SelectObject(dc, GetUIFont());
-            RECT tr = rc; tr.left += 4; tr.top += 2;
-            DrawTextW(dc, buf, n, &tr, DT_LEFT | DT_TOP);
-        }
-        EndPaint(h, &ps);
-        return 0;
-    }
-    return DefWindowProcW(h, m, w, l);
-}
-inline void EnsurePanelClass() {
-    static bool done = false; if (done) return; done = true;
-    WNDCLASSW wc = { 0 };
-    wc.lpfnWndProc = M2PanelProc;
-    wc.hInstance   = GetModuleHandleW(nullptr);
-    wc.hCursor     = LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW);
-    wc.hbrBackground = nullptr;
-    wc.lpszClassName = L"M2GOD_PANEL_GEN";
-    RegisterClassW(&wc);
-}
-inline void EnsureRichEdit() {
-    static bool done = false; if (done) return; done = true;
-    LoadLibraryW(L"Riched20.dll");
-}
-
-// ============================================================================
-//  Control — tum gorsel kontrollerin temeli (property vekilleri)
-// ============================================================================
-class Control {
-public:
-    HWND Handle = NULL;
-    int  Id     = 0;
-
-    Control() {}
-    Control(HWND h, int id) : Handle(h), Id(id) {}
-    virtual ~Control() {}
-
-    // ---- Text ----
-    class TextProp {
-        Control* c;
-    public:
-        explicit TextProp(Control* o) : c(o) {}
-        TextProp& operator=(const std::wstring& s) { if (c->Handle) SetWindowTextW(c->Handle, s.c_str()); return *this; }
-        TextProp& operator=(const wchar_t* s) { return *this = std::wstring(s ? s : L""); }
-        operator std::wstring() const {
-            wchar_t buf[1024]; int n = c->Handle ? GetWindowTextW(c->Handle, buf, 1024) : 0;
-            return std::wstring(buf, n);
-        }
-    } Text{ this };
-
-    // ---- Enabled ----
-    class EnabledProp {
-        Control* c;
-    public:
-        explicit EnabledProp(Control* o) : c(o) {}
-        EnabledProp& operator=(bool v) { if (c->Handle) EnableWindow(c->Handle, v ? TRUE : FALSE); return *this; }
-        operator bool() const { return c->Handle && IsWindowEnabled(c->Handle) != 0; }
-    } Enabled{ this };
-
-    // ---- Visible ----
-    class VisibleProp {
-        Control* c;
-    public:
-        explicit VisibleProp(Control* o) : c(o) {}
-        VisibleProp& operator=(bool v) { if (c->Handle) ShowWindow(c->Handle, v ? SW_SHOW : SW_HIDE); return *this; }
-        operator bool() const { return c->Handle && IsWindowVisible(c->Handle) != 0; }
-    } Visible{ this };
-
-    // ---- Font (HFONT atanir) ----
-    class FontProp {
-        Control* c;
-    public:
-        explicit FontProp(Control* o) : c(o) {}
-        FontProp& operator=(HFONT f) { if (c->Handle) SendMessageW(c->Handle, WM_SETFONT, (WPARAM)f, TRUE); return *this; }
-    } Font{ this };
-
-    // ---- BackColor / ForeColor ----
-    class BackColorProp {
-        Control* c;
-    public:
-        explicit BackColorProp(Control* o) : c(o) {}
-        BackColorProp& operator=(COLORREF v) { CtrlColorInfo(c->Handle).back = v; if (c->Handle) InvalidateRect(c->Handle, nullptr, TRUE); return *this; }
-        operator COLORREF() const { return CtrlColorInfo(c->Handle).back; }
-    } BackColor{ this };
-    class ForeColorProp {
-        Control* c;
-    public:
-        explicit ForeColorProp(Control* o) : c(o) {}
-        ForeColorProp& operator=(COLORREF v) { CtrlColorInfo(c->Handle).fore = v; if (c->Handle) InvalidateRect(c->Handle, nullptr, TRUE); return *this; }
-        operator COLORREF() const { return CtrlColorInfo(c->Handle).fore; }
-    } ForeColor{ this };
-
-    // ---- konum/boyut ----
-    void SetLocation(int x, int y) { if (Handle) SetWindowPos(Handle, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE); }
-    void SetSize(int w, int h)     { if (Handle) SetWindowPos(Handle, nullptr, 0, 0, w, h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE); }
-    void Focus()                   { if (Handle) SetFocus(Handle); }
-    void Hide() { Visible = false; }
-    void Show() { Visible = true; }
-};
-
-// ============================================================================
-//  Timer — gercek Win32 zamanlayici (SetTimer/KillTimer, WM_TIMER dispatch)
-// ============================================================================
-class Timer {
-    bool _enabled = false;
-public:
-    HWND Owner  = NULL;   // sahibi olan form penceresi
-    UINT Id     = 0;      // WM_TIMER wParam
-    UINT IntervalMs = 1000;
-
-    Timer(HWND owner, UINT id) : Owner(owner), Id(id) {}
-    virtual ~Timer() { Stop(); }
-
-    void Start() {
-        if (!Owner) return;
-        if (_enabled) KillTimer(Owner, Id);
-        SetTimer(Owner, Id, IntervalMs, nullptr);
-        _enabled = true;
-    }
-    void Stop() { if (Owner) KillTimer(Owner, Id); _enabled = false; }
-
-    // timer1->Enabled = false;  -> Stop()
-    // timer1->Enabled = true;   -> Start()
-    class EnabledProp {
-        Timer* t;
-    public:
-        explicit EnabledProp(Timer* o) : t(o) {}
-        EnabledProp& operator=(bool v) { if (v) t->Start(); else t->Stop(); return *this; }
-        operator bool() const { return t->_enabled; }
-    } Enabled{ this };
-
-    // timer1->Interval = 500; (calisir durumda aninda yeniden ayarlanir)
-    class IntervalProp {
-        Timer* t;
-    public:
-        explicit IntervalProp(Timer* o) : t(o) {}
-        IntervalProp& operator=(UINT ms) {
-            t->IntervalMs = ms;
-            if (t->_enabled && t->Owner) { KillTimer(t->Owner, t->Id); SetTimer(t->Owner, t->Id, ms, nullptr); }
-            return *this;
-        }
-        operator UINT() const { return t->IntervalMs; }
-    } Interval{ this };
-};
-
-// ============================================================================
-//  Somut kontroller — kurucular gercek Win32 kontrolunu yaratir
-// ============================================================================
-class Button : public Control {
-public:
-    Button(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        Handle = CreateWindowExW(0, L"BUTTON", text.c_str(),
-            BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, x, y, w, h,
-            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), TRUE);
-    }
-};
-
-class CheckBox : public Control {
-public:
-    CheckBox(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        Handle = CreateWindowExW(0, L"BUTTON", text.c_str(),
-            BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP, x, y, w, h,
-            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), TRUE);
-    }
-    // checkBox1->Checked = true;
-    class CheckedProp {
-        Control* c;
-    public:
-        explicit CheckedProp(Control* o) : c(o) {}
-        CheckedProp& operator=(bool v) { if (c->Handle) SendMessageW(c->Handle, BM_SETCHECK, v ? BST_CHECKED : BST_UNCHECKED, 0); return *this; }
-        operator bool() const { return c->Handle && SendMessageW(c->Handle, BM_GETCHECK, 0, 0) == BST_CHECKED; }
-    } Checked{ this };
-};
-
-class RadioButton : public CheckBox {
-public:
-    RadioButton(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h)
-        : CheckBox(parent, id, text, x, y, w, h) {
-        if (Handle) {
-            // stili radio'ya cevir (CreateWindow sonrasi stil degisimi guvenli)
-            LONG_PTR st = GetWindowLongPtrW(Handle, GWL_STYLE);
-            SetWindowLongPtrW(Handle, GWL_STYLE, (st & ~BS_AUTOCHECKBOX) | BS_AUTORADIOBUTTON);
-        }
-    }
-};
-
-class GroupBox : public Control {
-public:
-    GroupBox(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        Handle = CreateWindowExW(0, L"BUTTON", text.c_str(),
-            BS_GROUPBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP, x, y, w, h,
-            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), TRUE);
-    }
-};
-
-class Label : public Control {
-public:
-    Label(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        Handle = CreateWindowExW(0, L"STATIC", text.c_str(),
-            SS_LEFT | SS_NOTIFY | WS_CHILD | WS_VISIBLE, x, y, w, h,
-            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), TRUE);
-    }
-};
-
-class TextBox : public Control {
-public:
-    TextBox(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h, bool multiline = false) {
-        DWORD st = WS_BORDER | WS_TABSTOP | WS_CHILD | WS_VISIBLE;
-        if (multiline) st |= ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | WS_HSCROLL;
-        else st |= ES_AUTOHSCROLL;
-        Handle = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", text.c_str(), st, x, y, w, h,
-            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), TRUE);
-    }
-    // textBox1->ReadOnly = true;
-    class ReadOnlyProp {
-        Control* c;
-    public:
-        explicit ReadOnlyProp(Control* o) : c(o) {}
-        ReadOnlyProp& operator=(bool v) { if (c->Handle) SendMessageW(c->Handle, EM_SETREADONLY, v ? TRUE : FALSE, 0); return *this; }
-        operator bool() const { return c->Handle && (GetWindowLongW(c->Handle, GWL_STYLE) & ES_READONLY) != 0; }
-    } ReadOnly{ this };
-};
-
-class NumericUpDown : public TextBox {
-public:
-    NumericUpDown(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h, bool = false)
-        : TextBox(parent, id, text, x, y, w, h, false) {
-        if (Handle) {
-            LONG_PTR st = GetWindowLongPtrW(Handle, GWL_STYLE);
-            SetWindowLongPtrW(Handle, GWL_STYLE, (st & ~ES_AUTOHSCROLL) | ES_NUMBER);
-        }
-    }
-    // numericUpDown1->Value = 5;
-    class ValueProp {
-        Control* c;
-    public:
-        explicit ValueProp(Control* o) : c(o) {}
-        ValueProp& operator=(int v) { if (c->Handle) { wchar_t b[32]; swprintf(b, 32, L"%d", v); SetWindowTextW(c->Handle, b); } return *this; }
-        operator int() const { wchar_t b[32] = L""; if (c->Handle) GetWindowTextW(c->Handle, b, 32); return _wtoi(b); }
-    } Value{ this };
-};
-
-class RichTextBox : public Control {
-public:
-    RichTextBox(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        EnsureRichEdit();
-        Handle = CreateWindowExW(WS_EX_CLIENTEDGE, L"RichEdit20W", text.c_str(),
-            WS_BORDER | WS_TABSTOP | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | WS_CHILD | WS_VISIBLE,
-            x, y, w, h, parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), TRUE);
-    }
-};
-
-class ComboBox : public Control {
-public:
-    ComboBox(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        Handle = CreateWindowExW(0, L"COMBOBOX", text.c_str(),
-            CBS_DROPDOWNLIST | WS_VSCROLL | WS_CHILD | WS_VISIBLE | WS_TABSTOP, x, y, w, h,
-            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), TRUE);
-    }
-    // comboBox1->Items->Add(L"...");  comboBox1->Items->Clear();
-    // comboBox1->Items->SelectedIndex = 0;  comboBox1->Items->Count
-    class ItemsProp {
-        ComboBox* c;
-    public:
-        explicit ItemsProp(ComboBox* o) : c(o) {}
-        ItemsProp* operator->() { return this; }
-        void Clear() { if (c->Handle) SendMessageW(c->Handle, CB_RESETCONTENT, 0, 0); }
-        void Add(const std::wstring& s) { if (c->Handle) SendMessageW(c->Handle, CB_ADDSTRING, 0, (LPARAM)s.c_str()); }
-        void AddRange(std::initializer_list<const wchar_t*> ls) { for (auto* s : ls) Add(s); }
-        void RemoveAt(int i) { if (c->Handle) SendMessageW(c->Handle, CB_DELETESTRING, (WPARAM)i, 0); }
-        int  GetCount() const { return c->Handle ? (int)SendMessageW(c->Handle, CB_GETCOUNT, 0, 0) : 0; }
-        int  GetSelectedIndex() const { return c->Handle ? (int)SendMessageW(c->Handle, CB_GETCURSEL, 0, 0) : -1; }
-        void SetSelectedIndex(int i) { if (c->Handle) SendMessageW(c->Handle, CB_SETCURSEL, (WPARAM)i, 0); }
-        std::wstring GetSelectedItem() const {
-            if (!c->Handle) return L"";
-            int i = GetSelectedIndex(); if (i < 0) return L"";
-            wchar_t buf[256] = L"";
-            SendMessageW(c->Handle, CB_GETLBTEXT, (WPARAM)i, (LPARAM)buf);
-            return buf;
-        }
-        class SelIdxProp {
-            ItemsProp* p;
-        public:
-            explicit SelIdxProp(ItemsProp* o) : p(o) {}
-            SelIdxProp& operator=(int i) { p->SetSelectedIndex(i); return *this; }
-            operator int() const { return p->GetSelectedIndex(); }
-        } SelectedIndex{ this };
-        class SelItemProp {
-            ItemsProp* p;
-        public:
-            explicit SelItemProp(ItemsProp* o) : p(o) {}
-            operator std::wstring() const { return p->GetSelectedItem(); }
-        } SelectedItem{ this };
-        class CountProp {
-            ItemsProp* p;
-        public:
-            explicit CountProp(ItemsProp* o) : p(o) {}
-            operator int() const { return p->GetCount(); }
-        } Count{ this };
-    } Items{ this };
-};
-
-class ListBox : public Control {
-public:
-    ListBox(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        Handle = CreateWindowExW(0, L"LISTBOX", text.c_str(),
-            WS_BORDER | WS_VSCROLL | LBS_NOTIFY | WS_CHILD | WS_VISIBLE | WS_TABSTOP, x, y, w, h,
-            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), TRUE);
-    }
-    // listBox1->Items->Add(L"..."); listBox1->Items->SelectedIndex
-    class ItemsProp {
-        ListBox* c;
-    public:
-        explicit ItemsProp(ListBox* o) : c(o) {}
-        ItemsProp* operator->() { return this; }
-        void Clear() { if (c->Handle) SendMessageW(c->Handle, LB_RESETCONTENT, 0, 0); }
-        void Add(const std::wstring& s) { if (c->Handle) SendMessageW(c->Handle, LB_ADDSTRING, 0, (LPARAM)s.c_str()); }
-        void AddRange(std::initializer_list<const wchar_t*> ls) { for (auto* s : ls) Add(s); }
-        void RemoveAt(int i) { if (c->Handle) SendMessageW(c->Handle, LB_DELETESTRING, (WPARAM)i, 0); }
-        int  GetCount() const { return c->Handle ? (int)SendMessageW(c->Handle, LB_GETCOUNT, 0, 0) : 0; }
-        int  GetSelectedIndex() const { return c->Handle ? (int)SendMessageW(c->Handle, LB_GETCURSEL, 0, 0) : -1; }
-        void SetSelectedIndex(int i) { if (c->Handle) SendMessageW(c->Handle, LB_SETCURSEL, (WPARAM)i, 0); }
-        std::wstring GetSelectedItem() const {
-            if (!c->Handle) return L"";
-            int i = GetSelectedIndex(); if (i < 0) return L"";
-            wchar_t buf[256] = L"";
-            SendMessageW(c->Handle, LB_GETTEXT, (WPARAM)i, (LPARAM)buf);
-            return buf;
-        }
-        class SelIdxProp {
-            ItemsProp* p;
-        public:
-            explicit SelIdxProp(ItemsProp* o) : p(o) {}
-            SelIdxProp& operator=(int i) { p->SetSelectedIndex(i); return *this; }
-            operator int() const { return p->GetSelectedIndex(); }
-        } SelectedIndex{ this };
-        class SelItemProp {
-            ItemsProp* p;
-        public:
-            explicit SelItemProp(ItemsProp* o) : p(o) {}
-            operator std::wstring() const { return p->GetSelectedItem(); }
-        } SelectedItem{ this };
-        class CountProp {
-            ItemsProp* p;
-        public:
-            explicit CountProp(ItemsProp* o) : p(o) {}
-            operator int() const { return p->GetCount(); }
-        } Count{ this };
-    } Items{ this };
-};
-
-class ListView : public Control {
-public:
-    ListView(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        Handle = CreateWindowExW(WS_EX_CLIENTEDGE, L"SysListView32", text.c_str(),
-            LVS_REPORT | LVS_SHOWSELALWAYS | WS_BORDER | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-            x, y, w, h, parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-        if (Handle) {
-            SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), TRUE);
-            ListView_SetExtendedListViewStyle(Handle, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
-        }
-    }
-    // listView1->Columns->Add(L"Ad", 140);
-    class ColumnsProp {
-        ListView* c;
-    public:
-        explicit ColumnsProp(ListView* o) : c(o) {}
-        ColumnsProp* operator->() { return this; }
-        void Clear() { if (c->Handle) { while ((int)SendMessageW(c->Handle, LVM_DELETECOLUMN, 0, 0) > 0) {} } }
-        void Add(const std::wstring& title, int width = 120) {
-            if (!c->Handle) return;
-            LVCOLUMNW lc = { 0 };
-            lc.mask = LVCF_TEXT | LVCF_WIDTH;
-            lc.pszText = (LPWSTR)title.c_str();
-            lc.cx = width;
-            int n = (int)SendMessageW(c->Handle, LVM_GETITEMCOUNT, 0, 0);
-            SendMessageW(c->Handle, LVM_INSERTCOLUMNW, n, (LPARAM)&lc);
-        }
-    } Columns{ this };
-};
-
-class TreeView : public Control {
-public:
-    TreeView(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        Handle = CreateWindowExW(WS_EX_CLIENTEDGE, L"SysTreeView32", text.c_str(),
-            TVS_HASLINES | TVS_LINESATROOT | TVS_HASBUTTONS | WS_BORDER | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-            x, y, w, h, parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), TRUE);
-    }
-};
-
-class ProgressBar : public Control {
-public:
-    ProgressBar(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        Handle = CreateWindowExW(0, L"msctls_progress32", text.c_str(),
-            WS_CHILD | WS_VISIBLE, x, y, w, h,
-            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-        SendMessageW(Handle, PBM_SETRANGE32, 0, 100);
-    }
-    // progressBar1->Value = 50;  progressBar1->Maximum = 200;
-    class ValueProp {
-        Control* c;
-    public:
-        explicit ValueProp(Control* o) : c(o) {}
-        ValueProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, PBM_SETPOS, (WPARAM)v, 0); return *this; }
-        operator int() const { return c->Handle ? (int)SendMessageW(c->Handle, PBM_GETPOS, 0, 0) : 0; }
-    } Value{ this };
-    class MaximumProp {
-        Control* c;
-    public:
-        explicit MaximumProp(Control* o) : c(o) {}
-        MaximumProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, PBM_SETRANGE32, 0, (LPARAM)v); return *this; }
-    } Maximum{ this };
-};
-
-class TrackBar : public Control {
-public:
-    TrackBar(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        Handle = CreateWindowExW(0, L"msctls_trackbar32", text.c_str(),
-            TBS_HORZ | WS_CHILD | WS_VISIBLE | WS_TABSTOP, x, y, w, h,
-            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-        SendMessageW(Handle, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
-    }
-    class ValueProp {
-        Control* c;
-    public:
-        explicit ValueProp(Control* o) : c(o) {}
-        ValueProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, TBM_SETPOS, TRUE, (LPARAM)v); return *this; }
-        operator int() const { return c->Handle ? (int)SendMessageW(c->Handle, TBM_GETPOS, 0, 0) : 0; }
-    } Value{ this };
-};
-
-class HScrollBar : public Control {
-public:
-    HScrollBar(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        Handle = CreateWindowExW(0, L"SCROLLBAR", text.c_str(),
-            SBS_HORZ | WS_CHILD | WS_VISIBLE, x, y, w, h,
-            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-    }
-};
-class VScrollBar : public Control {
-public:
-    VScrollBar(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        Handle = CreateWindowExW(0, L"SCROLLBAR", text.c_str(),
-            SBS_VERT | WS_CHILD | WS_VISIBLE, x, y, w, h,
-            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-    }
-};
-
-class DateTimePicker : public Control {
-public:
-    DateTimePicker(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        Handle = CreateWindowExW(WS_EX_CLIENTEDGE, L"SysDateTimePick32", text.c_str(),
-            DTS_SHORTDATECENTURYFORMAT | WS_CHILD | WS_VISIBLE | WS_TABSTOP, x, y, w, h,
-            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), TRUE);
-    }
-};
-class MonthCalendar : public Control {
-public:
-    MonthCalendar(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        Handle = CreateWindowExW(0, L"SysMonthCal32", text.c_str(),
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP, x, y, w, h,
-            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), TRUE);
-    }
-};
-
-class TabControl : public Control {
-public:
-    TabControl(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        Handle = CreateWindowExW(WS_EX_CLIENTEDGE, L"SysTabControl32", text.c_str(),
-            TCS_TABS | WS_CLIPCHILDREN | WS_CHILD | WS_VISIBLE | WS_TABSTOP, x, y, w, h,
-            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), TRUE);
-    }
-    // tabControl1->Pages->Add(L"tabPage1");
-    class PagesProp {
-        TabControl* c;
-    public:
-        explicit PagesProp(TabControl* o) : c(o) {}
-        PagesProp* operator->() { return this; }
-        int Count() const { return c->Handle ? (int)SendMessageW(c->Handle, TCM_GETITEMCOUNT, 0, 0) : 0; }
-        void Add(const std::wstring& title) {
-            if (!c->Handle) return;
-            TCITEMW ti = { 0 };
-            ti.mask = TCIF_TEXT;
-            ti.pszText = (LPWSTR)title.c_str();
-            SendMessageW(c->Handle, TCM_INSERTITEMW, (WPARAM)Count(), (LPARAM)&ti);
-        }
-    } Pages{ this };
-};
-
-class StatusStrip : public Control {
-public:
-    StatusStrip(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        Handle = CreateWindowExW(0, L"msctls_statusbar32", text.c_str(),
-            WS_CHILD | WS_VISIBLE, x, y, w, h,
-            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-    }
-    // statusStrip1->Parts->Add(L"Hazir");
-    class PartsProp {
-        StatusStrip* c;
-    public:
-        explicit PartsProp(StatusStrip* o) : c(o) {}
-        PartsProp* operator->() { return this; }
-        void Add(const std::wstring& t) { if (c->Handle) { int n = (int)SendMessageW(c->Handle, SB_GETPARTS, 0, 0); SendMessageW(c->Handle, SB_SETTEXTW, n | SBT_NOBORDERS, (LPARAM)t.c_str()); } }
-    } Parts{ this };
-};
-
-class Panel : public Control {
-public:
-    Panel(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        EnsurePanelClass();
-        Handle = CreateWindowExW(0, L"M2GOD_PANEL_GEN", text.c_str(),
-            WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, x, y, w, h,
-            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-    }
-};
-class PictureBox : public Control {
-public:
-    PictureBox(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        Handle = CreateWindowExW(0, L"STATIC", text.c_str(),
-            SS_NOTIFY | WS_CHILD | WS_VISIBLE | WS_BORDER, x, y, w, h,
-            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), TRUE);
-    }
-};
-// Desteklenmeyen tipler icin yer tutucu kutu
-class Placeholder : public Control {
-public:
-    Placeholder(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
-        Handle = CreateWindowExW(WS_EX_CLIENTEDGE, L"STATIC", text.c_str(),
-            SS_NOTIFY | WS_CHILD | WS_VISIBLE, x, y, w, h,
-            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
-        Id = id;
-        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), TRUE);
-    }
-};
-
-} // namespace M2God
-)M2GODGLOBAL";
+    static const char kTemplate[] =
+#include "global_template.inc"
+    ;
     return Utf8ToWide(kTemplate);
 }
 
-// kontrol için CREATE satırı üretimi (PARENT-AWARE, FAZ 2.4 NESNE STİLİ)
+// kontrol için CREATE satırı üretimi (PARENT-AWARE, FAZ 2.5 TAM KAPSAMLI)
+static std::wstring BoolLit(const std::wstring& v, bool def = false) {
+    if (v.empty()) return def ? L"true" : L"false";
+    return _wcsicmp(v.c_str(), L"true") == 0 ? L"true" : L"false";
+}
+
+// görsel olmayan SDK bileşenleri (Faz 2.5)
+static std::wstring EmitComponentCreate(const Ctrl* c) {
+    std::wostringstream o;
+    const std::wstring& t = c->type;
+    if (t == L"OpenFileDialog" || t == L"SaveFileDialog") {
+        o << L"    " << c->name << L" = new M2God::" << t << L"();\n";
+        std::wstring f = c->Get(L"Filter");   if (!f.empty())  o << L"    " << c->name << L"->Filter = L\"" << EscCppStr(f) << L"\";\n";
+        std::wstring fn = c->Get(L"FileName"); if (!fn.empty()) o << L"    " << c->name << L"->FileName = L\"" << EscCppStr(fn) << L"\";\n";
+        std::wstring ti = c->Get(L"Title");   if (!ti.empty()) o << L"    " << c->name << L"->Title = L\"" << EscCppStr(ti) << L"\";\n";
+        std::wstring id = c->Get(L"InitialDirectory"); if (!id.empty()) o << L"    " << c->name << L"->InitialDirectory = L\"" << EscCppStr(id) << L"\";\n";
+        if (BoolLit(c->Get(L"Multiselect")) != L"false")
+            o << L"    " << c->name << L"->Multiselect = " << BoolLit(c->Get(L"Multiselect")) << L";\n";
+        if (t == L"SaveFileDialog") {
+            std::wstring de = c->Get(L"DefaultExt"); if (!de.empty()) o << L"    " << c->name << L"->DefaultExt = L\"" << EscCppStr(de) << L"\";\n";
+            if (_wcsicmp(c->Get(L"OverwritePrompt", L"True").c_str(), L"false") == 0)
+                o << L"    " << c->name << L"->OverwritePrompt = false;\n";
+        }
+        return o.str();
+    }
+    if (t == L"ColorDialog") {
+        o << L"    " << c->name << L" = new M2God::ColorDialog();\n";
+        if (_wcsicmp(c->Get(L"FullOpen", L"False").c_str(), L"true") == 0)
+            o << L"    " << c->name << L"->FullOpen = true;\n";
+        return o.str();
+    }
+    if (t == L"FontDialog") {
+        o << L"    " << c->name << L" = new M2God::FontDialog();\n";
+        return o.str();
+    }
+    if (t == L"FolderBrowserDialog") {
+        o << L"    " << c->name << L" = new M2God::FolderBrowserDialog();\n";
+        std::wstring d = c->Get(L"Description"); if (!d.empty()) o << L"    " << c->name << L"->Description = L\"" << EscCppStr(d) << L"\";\n";
+        return o.str();
+    }
+    if (t == L"BackgroundWorker") {
+        o << L"    " << c->name << L" = new M2God::BackgroundWorker();\n";
+        o << L"    " << c->name << L"->Owner = hWnd;\n";
+        if (_wcsicmp(c->Get(L"WorkerReportsProgress", L"False").c_str(), L"true") == 0)
+            o << L"    " << c->name << L"->WorkerReportsProgress = true;\n";
+        if (_wcsicmp(c->Get(L"WorkerSupportsCancellation", L"False").c_str(), L"true") == 0)
+            o << L"    " << c->name << L"->WorkerSupportsCancellation = true;\n";
+        auto ev = c->events.find(L"DoWork");
+        if (ev != c->events.end() && !ev->second.empty())
+            o << L"    " << c->name << L"->DoWork = [](){ " << ev->second << L"(M2God::Form::Handle); };\n";
+        auto evp = c->events.find(L"ProgressChanged");
+        if (evp != c->events.end() && !evp->second.empty())
+            o << L"    " << c->name << L"->ProgressChanged = [](int p){ " << evp->second << L"(M2God::Form::Handle); (void)p; };\n";
+        auto evc = c->events.find(L"RunWorkerCompleted");
+        if (evc != c->events.end() && !evc->second.empty())
+            o << L"    " << c->name << L"->RunWorkerCompleted = [](){ " << evc->second << L"(M2God::Form::Handle); };\n";
+        return o.str();
+    }
+    if (t == L"NotifyIcon") {
+        o << L"    " << c->name << L" = new M2God::NotifyIcon(hWnd);\n";
+        std::wstring tx = c->Get(L"Text"); if (!tx.empty()) o << L"    " << c->name << L"->Text = L\"" << EscCppStr(tx) << L"\";\n";
+        if (_wcsicmp(c->Get(L"Visible", L"True").c_str(), L"true") == 0)
+            o << L"    " << c->name << L"->Visible = true;\n";
+        std::wstring bt = c->Get(L"BalloonTipTitle"); if (!bt.empty()) o << L"    " << c->name << L"->BalloonTipTitle = L\"" << EscCppStr(bt) << L"\";\n";
+        std::wstring bx = c->Get(L"BalloonTipText");  if (!bx.empty()) o << L"    " << c->name << L"->BalloonTipText = L\"" << EscCppStr(bx) << L"\";\n";
+        return o.str();
+    }
+    if (t == L"ToolTip") {
+        o << L"    " << c->name << L" = new M2God::ToolTip(hWnd);\n";
+        if (_wcsicmp(c->Get(L"Active", L"True").c_str(), L"false") == 0)
+            o << L"    " << c->name << L"->Active = false;\n";
+        return o.str();
+    }
+    if (t == L"Process") {
+        o << L"    " << c->name << L" = new M2God::Process();\n";
+        std::wstring fn = c->Get(L"FileName");  if (!fn.empty()) o << L"    " << c->name << L"->FileName = L\"" << EscCppStr(fn) << L"\";\n";
+        std::wstring ar = c->Get(L"Arguments"); if (!ar.empty()) o << L"    " << c->name << L"->Arguments = L\"" << EscCppStr(ar) << L"\";\n";
+        return o.str();
+    }
+    if (t == L"SerialPort") {
+        o << L"    " << c->name << L" = new M2God::SerialPort();\n";
+        std::wstring pn = c->Get(L"PortName"); if (!pn.empty()) o << L"    " << c->name << L"->PortName = L\"" << EscCppStr(pn) << L"\";\n";
+        std::wstring br = c->Get(L"BaudRate"); if (!br.empty() && iswdigit(br[0])) o << L"    " << c->name << L"->BaudRate = " << _wtoi(br.c_str()) << L";\n";
+        return o.str();
+    }
+    o << L"    // " << t << L" bileşeni (Global.h sarmalayıcısı yok — katalog bilgi amaçlı)\n";
+    return o.str();
+}
+
+// enum değeri → ContentAlignment sabiti (tasarım metni WinForms adı)
+static std::wstring EmitContentAlignment(const std::wstring& v) {
+    if (_wcsicmp(v.c_str(), L"TopLeft") == 0) return L"M2God::ContentAlignment::TopLeft";
+    if (_wcsicmp(v.c_str(), L"TopCenter") == 0) return L"M2God::ContentAlignment::TopCenter";
+    if (_wcsicmp(v.c_str(), L"TopRight") == 0) return L"M2God::ContentAlignment::TopRight";
+    if (_wcsicmp(v.c_str(), L"BottomLeft") == 0) return L"M2God::ContentAlignment::BottomLeft";
+    if (_wcsicmp(v.c_str(), L"BottomCenter") == 0) return L"M2God::ContentAlignment::BottomCenter";
+    if (_wcsicmp(v.c_str(), L"BottomRight") == 0) return L"M2God::ContentAlignment::BottomRight";
+    if (_wcsicmp(v.c_str(), L"Left") == 0 || _wcsicmp(v.c_str(), L"MiddleLeft") == 0) return L"M2God::ContentAlignment::MiddleLeft";
+    if (_wcsicmp(v.c_str(), L"Right") == 0 || _wcsicmp(v.c_str(), L"MiddleRight") == 0) return L"M2God::ContentAlignment::MiddleRight";
+    return L"M2God::ContentAlignment::MiddleCenter";
+}
+
 static std::wstring EmitCreateCall(const Ctrl* c) {
     std::wostringstream o;
     if (c->type == L"Timer") {
@@ -747,17 +199,18 @@ static std::wstring EmitCreateCall(const Ctrl* c) {
             o << L"    // " << c->name << L"->Enabled = true;   // Timer'ı başlatmak için\n";
         return o.str();
     }
+    if (!M2ComponentTypeOf(c->type).empty()) return EmitComponentCreate(c);
+    if (c->nonVisual) return EmitComponentCreate(c);
     factory::Win32Class m = factory::MapClass(c->type);
-    if (m.cls.empty()) {
-        o << L"    // " << c->type << L" bileşeni (Global.h sarmalayıcısı yok)\n";
-        return o.str();
-    }
+    if (m.cls.empty()) return EmitComponentCreate(c);
     std::wstring parentVar = c->parent ? (c->parent->name + L"->Handle") : std::wstring(L"hWnd");
     if (c->parent)
         o << L"    // " << c->name << L" → " << c->parent->name << L" içine (child)\n";
     std::wstring txt = c->Get(L"Text");
     std::wstring esc = EscCppStr(txt);
-    std::wstring ctorArgs = parentVar + L", " + IdMacroOf(c->name) + L", L\"" + esc + L"\", " +
+    bool isTabCtrl = (c->type == L"TabControl");
+    std::wstring ctorText = isTabCtrl ? L"" : esc;   // TabControl sayfaları Pages->Add ile eklenir
+    std::wstring ctorArgs = parentVar + L", " + IdMacroOf(c->name) + L", L\"" + ctorText + L"\", " +
                             std::to_wstring(c->x) + L", " + std::to_wstring(c->y) + L", " +
                             std::to_wstring(c->w) + L", " + std::to_wstring(c->h);
     // TextBox ailesi: multiline parametresi
@@ -767,7 +220,6 @@ static std::wstring EmitCreateCall(const Ctrl* c) {
     }
     o << L"    " << c->name << L" = new M2God::" << M2TypeOf(c->type) << L"(" << ctorArgs << L");\n";
     // --- özellik emisyonu ---
-    // Items (ComboBox/ListBox): "Items" prop'u satır satır eklenir
     auto itItems = c->props.find(L"Items");
     if (itItems != c->props.end() && !itItems->second.empty()) {
         o << L"    " << c->name << L"->Items->Clear();\n";
@@ -777,7 +229,6 @@ static std::wstring EmitCreateCall(const Ctrl* c) {
                 o << L"    " << c->name << L"->Items->Add(L\"" << EscCppStr(t) << L"\");\n";
         }
     }
-    // SelectedIndex
     {
         std::wstring si = c->Get(L"SelectedIndex");
         if (!si.empty() && iswdigit(si[0]) && _wtoi(si.c_str()) >= 0)
@@ -821,9 +272,201 @@ static std::wstring EmitCreateCall(const Ctrl* c) {
         o << L"    " << c->name << L"->Enabled = false;\n";
     if (_wcsicmp(c->Get(L"Visible", L"True").c_str(), L"false") == 0)
         o << L"    " << c->name << L"->Visible = false;\n";
-    // konteyner bildirim köprüsü: konteyner çocuklarının WM_COMMAND/WM_NOTIFY'ı forma taşınır
+
+    // ===================== FAZ 2.5: KAPSAMLI ÖZELLİK EMİSYONU =====================
+    const std::wstring& T = c->type;
+    std::wstring N = c->name;
+    // TextBox / MaskedTextBox
+    if (T == L"TextBox" || T == L"MaskedTextBox") {
+        if (_wcsicmp(c->Get(L"ReadOnly", L"False").c_str(), L"true") == 0)
+            o << L"    " << N << L"->ReadOnly = true;\n";
+        { std::wstring v = c->Get(L"MaxLength"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) > 0)
+            o << L"    " << N << L"->MaxLength = " << _wtoi(v.c_str()) << L";\n"; }
+        { std::wstring v = c->Get(L"PasswordChar");
+          if (!v.empty() && v[0]) o << L"    " << N << L"->PasswordChar = L'" << v[0] << L"';\n"; }
+        { std::wstring v = c->Get(L"CharacterCasing");
+          if (_wcsicmp(v.c_str(), L"Upper") == 0) o << L"    " << N << L"->CharacterCasing = M2God::CharacterCasing::Upper;\n";
+          else if (_wcsicmp(v.c_str(), L"Lower") == 0) o << L"    " << N << L"->CharacterCasing = M2God::CharacterCasing::Lower;\n"; }
+        { std::wstring v = c->Get(L"TextAlign");
+          if (_wcsicmp(v.c_str(), L"Center") == 0) o << L"    " << N << L"->TextAlign = M2God::HorizontalAlignment::Center;\n";
+          else if (_wcsicmp(v.c_str(), L"Right") == 0) o << L"    " << N << L"->TextAlign = M2God::HorizontalAlignment::Right;\n"; }
+        if (T == L"MaskedTextBox") {
+            std::wstring mk = c->Get(L"Mask"); if (!mk.empty()) o << L"    " << N << L"->Mask = L\"" << EscCppStr(mk) << L"\";   // bilgi amaçlı\n";
+        }
+    }
+    // NumericUpDown
+    if (T == L"NumericUpDown") {
+        { std::wstring v = c->Get(L"Minimum"); if (!v.empty() && iswdigit(v[0])) o << L"    " << N << L"->Minimum = " << _wtoi(v.c_str()) << L";\n"; }
+        { std::wstring v = c->Get(L"Maximum"); if (!v.empty() && iswdigit(v[0])) o << L"    " << N << L"->Maximum = " << _wtoi(v.c_str()) << L";\n"; }
+        { std::wstring v = c->Get(L"Value");   if (!v.empty() && iswdigit(v[0])) o << L"    " << N << L"->Value = " << _wtoi(v.c_str()) << L";\n"; }
+        { std::wstring v = c->Get(L"Increment"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) > 0) o << L"    " << N << L"->Increment = " << _wtoi(v.c_str()) << L";\n"; }
+        if (_wcsicmp(c->Get(L"ReadOnly", L"False").c_str(), L"true") == 0)
+            o << L"    " << N << L"->ReadOnly = true;\n";
+    }
+    // RichTextBox
+    if (T == L"RichTextBox") {
+        if (_wcsicmp(c->Get(L"ReadOnly", L"False").c_str(), L"true") == 0)
+            o << L"    " << N << L"->ReadOnly = true;\n";
+        { std::wstring v = c->Get(L"MaxLength"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) > 0)
+            o << L"    " << N << L"->MaxLength = " << _wtoi(v.c_str()) << L";\n"; }
+    }
+    // ComboBox
+    if (T == L"ComboBox") {
+        { std::wstring v = c->Get(L"DropDownStyle");
+          if (_wcsicmp(v.c_str(), L"DropDown") == 0) o << L"    " << N << L"->DropDownStyle = M2God::ComboBoxStyle::DropDown;\n";
+          else if (_wcsicmp(v.c_str(), L"Simple") == 0) o << L"    " << N << L"->DropDownStyle = M2God::ComboBoxStyle::Simple;\n"; }
+        { std::wstring v = c->Get(L"MaxLength"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) > 0)
+            o << L"    " << N << L"->MaxLength = " << _wtoi(v.c_str()) << L";\n"; }
+    }
+    // ListView
+    if (T == L"ListView") {
+        { std::wstring v = c->Get(L"View");
+          if (_wcsicmp(v.c_str(), L"List") == 0) o << L"    " << N << L"->View = M2God::View::List;\n";
+          else if (_wcsicmp(v.c_str(), L"LargeIcon") == 0) o << L"    " << N << L"->View = M2God::View::LargeIcon;\n";
+          else if (_wcsicmp(v.c_str(), L"SmallIcon") == 0) o << L"    " << N << L"->View = M2God::View::SmallIcon;\n"; }
+        if (_wcsicmp(c->Get(L"CheckBoxes", L"False").c_str(), L"true") == 0)
+            o << L"    " << N << L"->CheckBoxes = true;\n";
+        if (_wcsicmp(c->Get(L"GridLines", L"False").c_str(), L"true") == 0)
+            o << L"    " << N << L"->GridLines = true;\n";
+        if (_wcsicmp(c->Get(L"FullRowSelect", L"True").c_str(), L"false") == 0)
+            o << L"    " << N << L"->FullRowSelect = false;\n";
+        { std::wstring v = c->Get(L"HeaderStyle");
+          if (_wcsicmp(v.c_str(), L"None") == 0) o << L"    " << N << L"->HeaderStyle = M2God::HeaderStyle::None;\n";
+          else if (_wcsicmp(v.c_str(), L"NonClickable") == 0) o << L"    " << N << L"->HeaderStyle = M2God::HeaderStyle::NonClickable;\n"; }
+    }
+    // TreeView
+    if (T == L"TreeView") {
+        if (_wcsicmp(c->Get(L"CheckBoxes", L"False").c_str(), L"true") == 0)
+            o << L"    " << N << L"->CheckBoxes = true;   // ogeler eklenmeden uygulanır\n";
+        if (_wcsicmp(c->Get(L"ShowLines", L"True").c_str(), L"false") == 0)
+            o << L"    " << N << L"->ShowLines = false;\n";
+        if (_wcsicmp(c->Get(L"ShowPlusMinus", L"True").c_str(), L"false") == 0)
+            o << L"    " << N << L"->ShowPlusMinus = false;\n";
+        if (_wcsicmp(c->Get(L"ShowRootLines", L"True").c_str(), L"false") == 0)
+            o << L"    " << N << L"->ShowRootLines = false;\n";
+        if (_wcsicmp(c->Get(L"HotTracking", L"False").c_str(), L"true") == 0)
+            o << L"    " << N << L"->HotTracking = true;\n";
+    }
+    // ProgressBar
+    if (T == L"ProgressBar") {
+        { std::wstring v = c->Get(L"Minimum"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) != 0)
+            o << L"    " << N << L"->Minimum = " << _wtoi(v.c_str()) << L";\n"; }
+        { std::wstring v = c->Get(L"Maximum"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) != 100)
+            o << L"    " << N << L"->Maximum = " << _wtoi(v.c_str()) << L";\n"; }
+        { std::wstring v = c->Get(L"Value");   if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) > 0)
+            o << L"    " << N << L"->Value = " << _wtoi(v.c_str()) << L";\n"; }
+        { std::wstring v = c->Get(L"Step");    if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) != 10)
+            o << L"    " << N << L"->Step = " << _wtoi(v.c_str()) << L";\n"; }
+        { std::wstring v = c->Get(L"Style");
+          if (_wcsicmp(v.c_str(), L"Marquee") == 0) o << L"    " << N << L"->Style = M2God::ProgressBarStyle::Marquee;\n";
+          else if (_wcsicmp(v.c_str(), L"Continuous") == 0) o << L"    " << N << L"->Style = M2God::ProgressBarStyle::Continuous;\n"; }
+    }
+    // TrackBar
+    if (T == L"TrackBar") {
+        { std::wstring v = c->Get(L"Minimum"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) != 0)
+            o << L"    " << N << L"->Minimum = " << _wtoi(v.c_str()) << L";\n"; }
+        { std::wstring v = c->Get(L"Maximum"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) != 100)
+            o << L"    " << N << L"->Maximum = " << _wtoi(v.c_str()) << L";\n"; }
+        { std::wstring v = c->Get(L"Value");   if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) > 0)
+            o << L"    " << N << L"->Value = " << _wtoi(v.c_str()) << L";\n"; }
+        { std::wstring v = c->Get(L"TickFrequency"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) > 0)
+            o << L"    " << N << L"->TickFrequency = " << _wtoi(v.c_str()) << L";\n"; }
+        { std::wstring v = c->Get(L"SmallChange"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) != 1)
+            o << L"    " << N << L"->SmallChange = " << _wtoi(v.c_str()) << L";\n"; }
+        { std::wstring v = c->Get(L"LargeChange"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) != 10)
+            o << L"    " << N << L"->LargeChange = " << _wtoi(v.c_str()) << L";\n"; }
+        { std::wstring v = c->Get(L"Orientation");
+          if (_wcsicmp(v.c_str(), L"Vertical") == 0) o << L"    // " << N << L"->Orientation = Vertical (yaratma stili TBS_VERT gerektirir)\n"; }
+    }
+    // ScrollBar'lar
+    if (T == L"HScrollBar" || T == L"VScrollBar") {
+        { std::wstring v = c->Get(L"Minimum"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) != 0)
+            o << L"    " << N << L"->Minimum = " << _wtoi(v.c_str()) << L";\n"; }
+        { std::wstring v = c->Get(L"Maximum"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) != 100)
+            o << L"    " << N << L"->Maximum = " << _wtoi(v.c_str()) << L";\n"; }
+        { std::wstring v = c->Get(L"Value");   if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) > 0)
+            o << L"    " << N << L"->Value = " << _wtoi(v.c_str()) << L";\n"; }
+        { std::wstring v = c->Get(L"SmallChange"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) != 1)
+            o << L"    " << N << L"->SmallChange = " << _wtoi(v.c_str()) << L";\n"; }
+        { std::wstring v = c->Get(L"LargeChange"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) != 10)
+            o << L"    " << N << L"->LargeChange = " << _wtoi(v.c_str()) << L";\n"; }
+    }
+    // DateTimePicker
+    if (T == L"DateTimePicker") {
+        { std::wstring v = c->Get(L"Format");
+          if (_wcsicmp(v.c_str(), L"Long") == 0) o << L"    " << N << L"->Format = M2God::DateTimePickerFormat::Long;\n";
+          else if (_wcsicmp(v.c_str(), L"Time") == 0) o << L"    " << N << L"->Format = M2God::DateTimePickerFormat::Time;\n";
+          else if (_wcsicmp(v.c_str(), L"Custom") == 0) o << L"    " << N << L"->Format = M2God::DateTimePickerFormat::Custom;\n"; }
+        { std::wstring v = c->Get(L"CustomFormat"); if (!v.empty())
+            o << L"    " << N << L"->CustomFormat = L\"" << EscCppStr(v) << L"\";\n"; }
+    }
+    // MonthCalendar
+    if (T == L"MonthCalendar") {
+        { std::wstring v = c->Get(L"MaxSelectionCount"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) > 1)
+            o << L"    " << N << L"->MaxSelectionCount = " << _wtoi(v.c_str()) << L";\n"; }
+    }
+    // Panel
+    if (T == L"Panel") {
+        { std::wstring v = c->Get(L"BorderStyle");
+          if (_wcsicmp(v.c_str(), L"FixedSingle") == 0) o << L"    " << N << L"->BorderStyle = M2God::BorderStyle::FixedSingle;\n";
+          else if (_wcsicmp(v.c_str(), L"Fixed3D") == 0) o << L"    " << N << L"->BorderStyle = M2God::BorderStyle::Fixed3D;\n";
+          else if (_wcsicmp(v.c_str(), L"None") == 0) o << L"    " << N << L"->BorderStyle = M2God::BorderStyle::None;\n"; }
+    }
+    // PictureBox
+    if (T == L"PictureBox") {
+        { std::wstring v = c->Get(L"SizeMode");
+          if (_wcsicmp(v.c_str(), L"StretchImage") == 0) o << L"    " << N << L"->SizeMode = M2God::PictureBoxSizeMode::StretchImage;\n";
+          else if (_wcsicmp(v.c_str(), L"AutoSize") == 0) o << L"    " << N << L"->SizeMode = M2God::PictureBoxSizeMode::AutoSize;\n";
+          else if (_wcsicmp(v.c_str(), L"CenterImage") == 0) o << L"    " << N << L"->SizeMode = M2God::PictureBoxSizeMode::CenterImage;\n";
+          else if (_wcsicmp(v.c_str(), L"Zoom") == 0) o << L"    " << N << L"->SizeMode = M2God::PictureBoxSizeMode::Zoom;\n"; }
+        { std::wstring v = c->Get(L"ImageLocation"); if (!v.empty())
+            o << L"    " << N << L"->ImageLocation = L\"" << EscCppStr(v) << L"\";\n"; }
+    }
+    // Label / LinkLabel
+    if (T == L"Label" || T == L"LinkLabel") {
+        { std::wstring v = c->Get(L"TextAlign");
+          if (!v.empty() && _wcsicmp(v.c_str(), L"TopLeft") != 0)
+            o << L"    " << N << L"->TextAlign = " << EmitContentAlignment(v) << L";\n"; }
+        { std::wstring v = c->Get(L"BorderStyle");
+          if (_wcsicmp(v.c_str(), L"FixedSingle") == 0) o << L"    " << N << L"->BorderStyle = M2God::BorderStyle::FixedSingle;\n";
+          else if (_wcsicmp(v.c_str(), L"Fixed3D") == 0) o << L"    " << N << L"->BorderStyle = M2God::BorderStyle::Fixed3D;\n"; }
+        if (_wcsicmp(c->Get(L"AutoEllipsis", L"False").c_str(), L"true") == 0)
+            o << L"    " << N << L"->AutoEllipsis = true;\n";
+    }
+    // Button
+    if (T == L"Button") {
+        { std::wstring v = c->Get(L"TextAlign");
+          if (!v.empty() && _wcsicmp(v.c_str(), L"MiddleCenter") != 0)
+            o << L"    " << N << L"->TextAlign = " << EmitContentAlignment(v) << L";\n"; }
+    }
+    // TabControl: Text satırları → Pages
+    if (isTabCtrl) {
+        int pages = 0;
+        for (auto& line : Split(txt, L'\n')) {
+            std::wstring t = Trim(line);
+            if (!t.empty()) { o << L"    " << N << L"->Pages->Add(L\"" << EscCppStr(t) << L"\");\n"; pages++; }
+        }
+        if (pages == 0) o << L"    " << N << L"->Pages->Add(L\"tabPage1\");\n";
+    }
+    // StatusStrip: Text satırları → Parts
+    if (T == L"StatusStrip") {
+        for (auto& line : Split(txt, L'\n')) {
+            std::wstring t = Trim(line);
+            if (!t.empty()) o << L"    " << N << L"->Parts->Add(L\"" << EscCppStr(t) << L"\");\n";
+        }
+    }
+    // MenuStrip/ContextMenuStrip: Text satırları → Items (üst düzey)
+    if (T == L"MenuStrip" || T == L"ToolStrip" || T == L"ContextMenuStrip") {
+        for (auto& line : Split(txt, L'\n')) {
+            std::wstring t = Trim(line);
+            if (!t.empty()) o << L"    " << N << L"->Items->Add(L\"" << EscCppStr(t) << L"\");\n";
+        }
+        if (T == L"MenuStrip" || T == L"ToolStrip")
+            o << L"    " << N << L"->Apply();\n";
+    }
+    // konteyner bildirim köprüsü
     if (IsContainerType(c->type))
-        o << L"    SetWindowSubclass(" << c->name << L"->Handle, ContainerBridgeProc, 1, 0);\n";
+        o << L"    SetWindowSubclass(" << N << L"->Handle, ContainerBridgeProc, 1, 0);\n";
     return o.str();
 }
 
@@ -836,19 +479,55 @@ static std::wstring EmitHandlesBlock(bool asExtern) {
             h << (asExtern ? L"extern " : L"") << L"M2God::Timer* " << c->name << (asExtern ? L";\n" : L" = nullptr;\n");
             continue;
         }
-        if (c->nonVisual) continue;
-        factory::Win32Class mc = factory::MapClass(c->type);
-        if (mc.cls.empty()) continue;   // Global.h sarmalayıcısı olmayan bileşen
-        h << (asExtern ? L"extern " : L"") << L"M2God::" << M2TypeOf(c->type)
+        std::wstring wrapper = M2ComponentTypeOf(c->type);
+        if (!wrapper.empty()) {
+            // SDK sarmalayıcısı olan bileşen/diyalog (Faz 2.5)
+        } else if (c->nonVisual) {
+            continue;                        // sarmalayıcısı olmayan bileşen
+        } else {
+            factory::Win32Class mc = factory::MapClass(c->type);
+            if (mc.cls.empty()) continue;
+            wrapper = M2TypeOf(c->type);
+        }
+        h << (asExtern ? L"extern " : L"") << L"M2God::" << wrapper
           << L"* " << c->name << (asExtern ? L";\n" : L" = nullptr;\n");
     }
     return h.str();
 }
 
+// WM_COMMAND bildirim eşlemesi (Faz 2.5 — boş dönerse WM_NOTIFY/WM_HSCROLL'a bakılır)
+static std::wstring CmdNotifyOf(const std::wstring& type, const std::wstring& evName) {
+    if (evName == L"Click" || evName == L"CheckedChanged") {
+        if (type == L"Label" || type == L"LinkLabel" || type == L"PictureBox") return L"STN_CLICKED";
+        return L"BN_CLICKED";
+    }
+    if (evName == L"TextChanged") {
+        if (type == L"ComboBox") return L"CBN_EDITCHANGE";
+        return L"EN_CHANGE";
+    }
+    if (evName == L"SelectedIndexChanged") {
+        if (type == L"ComboBox") return L"CBN_SELCHANGE";
+        if (type == L"ListBox") return L"LBN_SELCHANGE";
+        return L"";   // ListView/CheckedListBox/TabControl → WM_NOTIFY
+    }
+    if (evName == L"DoubleClick") {
+        if (type == L"ListBox") return L"LBN_DBLCLK";
+        if (type == L"ComboBox") return L"CBN_DBLCLK";
+        if (type == L"Label" || type == L"LinkLabel" || type == L"PictureBox") return L"STN_DBLCLK";
+        return L"BN_DOUBLECLICKED";
+    }
+    if (evName == L"ValueChanged") {
+        if (type == L"NumericUpDown") return L"EN_CHANGE";
+        return L"";
+    }
+    return L"";
+}
+
 std::wstring GenerateForm1Cpp() {
     std::wostringstream o;
-    o << L"// Form1.cpp — M2GodWin32 UI Designer (Faz 2.4) tarafından üretilmiştir.\n";
+    o << L"// Form1.cpp — M2GodWin32 UI Designer (Faz 2.5) tarafından üretilmiştir.\n";
     o << L"// Nesne sözdizimi için Global.h: timer1->Enabled = false; button1->Text = L\"...\";\n";
+    o << L"// Kapsam: tüm kontroller + bileşenler + diyaloglar (M2God SDK v2500)\n";
     o << L"// Marker blokları (//== M2GOD:... ) tasarımcı senkronizasyonu içindir; dışını düzenleyebilirsiniz.\n\n";
     o << L"#include \"Form1.h\"\n";
     o << L"#include <commctrl.h>\n\n";
@@ -862,12 +541,12 @@ std::wstring GenerateForm1Cpp() {
     o << L"    hFont = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,\n";
     o << L"        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,\n";
     o << L"        DEFAULT_PITCH | FF_DONTCARE, L\"Segoe UI\");\n";
-    o << L"    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES };\n";
+    o << L"    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES | ICC_DATE_CLASSES };\n";
     o << L"    InitCommonControlsEx(&icc);\n";
     o << L"}\n\n";
     // HANDLES
     o << L"//== M2GOD:HANDLES-BEGIN\n";
-    o << L"// Not: kontroller artık M2God nesneleridir (Global.h). HWND için: button1->Handle\n";
+    o << L"// Not: kontroller M2God nesneleridir (Global.h). HWND için: button1->Handle\n";
     o << EmitHandlesBlock(false);
     o << L"//== M2GOD:HANDLES-END\n\n";
     // CREATE
@@ -894,6 +573,7 @@ std::wstring GenerateForm1Cpp() {
     emitBranch(nullptr);
     for (auto* c : g_model.ctrls) if (c->nonVisual && c->type != L"Timer") o << EmitCreateCall(c) << L"\n";
     for (auto* c : g_model.ctrls) if (c->type == L"Timer") o << EmitCreateCall(c) << L"\n";
+    o << L"    M2God::InitDone() = true;   // bildirim yonlendirme artik acik\n";
     o << L"}\n\n";
     // CleanupControls — WM_DESTROY'da timer durdurma + nesne serbest bırakma
     o << L"void CleanupControls() {\n";
@@ -903,7 +583,11 @@ std::wstring GenerateForm1Cpp() {
             o << L"    if (" << c->name << L") { " << c->name << L"->Stop(); delete " << c->name << L"; " << c->name << L" = nullptr; }\n";
     for (int i = (int)g_model.ctrls.size() - 1; i >= 0; i--) {
         Ctrl* c = g_model.ctrls[i];
-        if (c->nonVisual || c->type == L"Timer") continue;
+        if (c->type == L"Timer") continue;
+        if (M2ComponentTypeOf(c->type).empty()) {
+            factory::Win32Class mc = factory::MapClass(c->type);
+            if (mc.cls.empty() || c->nonVisual) continue;
+        }
         o << L"    if (" << c->name << L") { delete " << c->name << L"; " << c->name << L" = nullptr; }\n";
     }
     o << L"}\n";
@@ -926,6 +610,7 @@ std::wstring GenerateForm1Cpp() {
     // WNDPROC
     o << L"//== M2GOD:WNDPROC-BEGIN\n";
     o << L"static LRESULT CALLBACK Form1_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {\n";
+    o << L"    static bool s_m2Shown = false;\n";
     o << L"    switch (message) {\n";
     o << L"    case WM_CREATE:\n";
     o << L"        M2GodForm::InitializeControls(hWnd);\n";
@@ -934,34 +619,36 @@ std::wstring GenerateForm1Cpp() {
     else
         o << L"        // Form1_Load burada çağrılır (Olaylar sekmesinden ekleyin)\n";
     o << L"        return 0;\n";
-    // WM_COMMAND router
+    // WM_COMMAND router (Faz 2.5 genişletilmiş bildirimler)
     o << L"    case WM_COMMAND: {\n";
+    o << L"        if (!M2God::InitDone()) break;   // yaratim sirasinda bildirim yok\n";
     o << L"        int id = LOWORD(wParam), ev = HIWORD(wParam);\n";
     o << L"        switch (id) {\n";
     for (auto* c : g_model.ctrls) {
-        if (c->events.empty()) continue;
+        if (c->events.empty() || c->type == L"Timer") continue;
+        if (c->nonVisual) continue;
         bool routed = false;
+        std::wostringstream br;
         for (auto& kv : c->events) {
-            const std::wstring& evName = kv.first;
-            std::wstring notify;
-            if (evName == L"Click" || evName == L"CheckedChanged") notify = L"BN_CLICKED";
-            else if (evName == L"TextChanged") notify = L"EN_CHANGE";
-            else if (evName == L"SelectedIndexChanged") {
-                if (c->type == L"ComboBox") notify = L"CBN_SELCHANGE";
-                else notify = L"LBN_SELCHANGE";
-            }
+            std::wstring notify = CmdNotifyOf(c->type, kv.first);
             if (notify.empty()) continue;
             routed = true;
+            br << L"            if (ev == " << notify << L" && M2GodForm::" << c->name << L") M2GodForm::" << kv.second << L"(hWnd);\n";
+        }
+        if (routed) {
             o << L"        case M2GodForm::" << IdMacroOf(c->name) << L":\n";
-            o << L"            if (ev == " << notify << L") M2GodForm::" << kv.second << L"(hWnd);\n";
+            o << br.str();
             o << L"            break;\n";
         }
-        if (routed) o << L"\n";
     }
     o << L"        }\n";
+    // MenuStrip/ToolStrip komut dağıtımı
+    for (auto* c : g_model.ctrls)
+        if (c->type == L"MenuStrip" || c->type == L"ToolStrip")
+            o << L"        if (M2GodForm::" << c->name << L") M2GodForm::" << c->name << L"->DispatchCommand((UINT)id);\n";
     o << L"        break;\n";
     o << L"    }\n";
-    // WM_TIMER — gerçek timer dispatch (Faz 2.4); çoklu timer tek case içinde
+    // WM_TIMER — gerçek timer dispatch (çoklu timer tek case içinde)
     {
         std::wostringstream timerCases;
         for (auto* c : g_model.ctrls) {
@@ -975,11 +662,164 @@ std::wstring GenerateForm1Cpp() {
         }
         if (!timerCases.str().empty()) {
             o << L"    case WM_TIMER:\n";
+            o << L"        if (M2God::InitDone()) {\n";
             o << timerCases.str();
+            o << L"        }\n";
             o << L"        break;\n";
         }
     }
-    // WM_CTLCOLOR* — BackColor/ForeColor uygulanır (Faz 2.4)
+    // WM_NOTIFY — ListView/CheckedListBox/TreeView/TabControl/DateTimePicker (Faz 2.5)
+    {
+        std::wostringstream nt;
+        bool any = false;
+        for (auto* c : g_model.ctrls) {
+            if (c->nonVisual || c->events.empty()) continue;
+            std::vector<std::pair<std::wstring, std::wstring>> lines; // (koşul-ek, handler)
+            auto has = [&](const wchar_t* ev) -> std::wstring {
+                auto it = c->events.find(ev);
+                return it == c->events.end() ? std::wstring() : it->second;
+            };
+            if (c->type == L"ListView" || c->type == L"CheckedListBox") {
+                if (has(L"SelectedIndexChanged").size()) lines.push_back({ L"LVN_ITEMCHANGED", has(L"SelectedIndexChanged") });
+                if (has(L"ItemCheck").size())            lines.push_back({ L"LVN_ITEMCHANGED", has(L"ItemCheck") });
+                if (has(L"Click").size())                lines.push_back({ L"NM_CLICK", has(L"Click") });
+                if (has(L"DoubleClick").size())          lines.push_back({ L"NM_DBLCLK", has(L"DoubleClick") });
+            } else if (c->type == L"TreeView") {
+                if (has(L"AfterSelect").size())          lines.push_back({ L"TVN_SELCHANGED", has(L"AfterSelect") });
+                if (has(L"SelectedIndexChanged").size()) lines.push_back({ L"TVN_SELCHANGED", has(L"SelectedIndexChanged") });
+                if (has(L"Click").size())                lines.push_back({ L"NM_CLICK", has(L"Click") });
+                if (has(L"DoubleClick").size())          lines.push_back({ L"NM_DBLCLK", has(L"DoubleClick") });
+            } else if (c->type == L"TabControl") {
+                if (has(L"SelectedIndexChanged").size()) lines.push_back({ L"TCN_SELCHANGE", has(L"SelectedIndexChanged") });
+            } else if (c->type == L"DateTimePicker") {
+                if (has(L"ValueChanged").size())         lines.push_back({ L"DTN_DATETIMECHANGE", has(L"ValueChanged") });
+            }
+            if (lines.empty()) continue;
+            any = true;
+            nt << L"        case M2GodForm::" << IdMacroOf(c->name) << L":\n";
+            for (auto& ln : lines) {
+                if (ln.first == L"LVN_ITEMCHANGED")
+                    nt << L"            if (nm->code == LVN_ITEMCHANGED && (((LPNMLISTVIEW)lParam)->uChanged & LVIF_STATE) && M2GodForm::" << c->name << L") M2GodForm::" << ln.second << L"(hWnd);\n";
+                else
+                    nt << L"            if (nm->code == " << ln.first << L" && M2GodForm::" << c->name << L") M2GodForm::" << ln.second << L"(hWnd);\n";
+            }
+            nt << L"            break;\n";
+        }
+        if (any) {
+            o << L"    case WM_NOTIFY: {\n";
+            o << L"        if (!M2God::InitDone()) break;\n";
+            o << L"        NMHDR* nm = (NMHDR*)lParam;\n";
+            o << L"        switch (nm->idFrom) {\n";
+            o << nt.str();
+            o << L"        }\n";
+            o << L"        break;\n";
+            o << L"    }\n";
+        }
+    }
+    // WM_HSCROLL / WM_VSCROLL — TrackBar ve ScrollBar'lar (Faz 2.5)
+    {
+        std::wostringstream hs;
+        bool any = false;
+        for (auto* c : g_model.ctrls) {
+            if (c->nonVisual || c->events.empty()) continue;
+            if (c->type != L"TrackBar" && c->type != L"HScrollBar" && c->type != L"VScrollBar") continue;
+            if (c->type == L"VScrollBar") continue;   // dikey olanlar VSCROLL'a
+            auto sc = c->events.find(L"Scroll");
+            auto vc = c->events.find(L"ValueChanged");
+            if (sc == c->events.end() && vc == c->events.end()) continue;
+            any = true;
+            hs << L"        if ((HWND)lParam == (HWND)(M2GodForm::" << c->name << L" ? M2GodForm::" << c->name << L"->Handle : nullptr)) {\n";
+            if (vc != c->events.end()) hs << L"            M2GodForm::" << vc->second << L"(hWnd);\n";
+            if (sc != c->events.end()) hs << L"            M2GodForm::" << sc->second << L"(hWnd);\n";
+            hs << L"            return 0;\n";
+            hs << L"        }\n";
+        }
+        if (any) {
+            o << L"    case WM_HSCROLL:\n";
+            o << L"        if (M2God::InitDone()) {\n" << hs.str();
+            o << L"        }\n";
+            o << L"        break;\n";
+        }
+    }
+    {
+        std::wostringstream vs;
+        bool any = false;
+        for (auto* c : g_model.ctrls) {
+            if (c->nonVisual || c->events.empty()) continue;
+            if (c->type != L"VScrollBar") continue;
+            auto sc = c->events.find(L"Scroll");
+            auto vc = c->events.find(L"ValueChanged");
+            if (sc == c->events.end() && vc == c->events.end()) continue;
+            any = true;
+            vs << L"        if ((HWND)lParam == (HWND)(M2GodForm::" << c->name << L" ? M2GodForm::" << c->name << L"->Handle : nullptr)) {\n";
+            if (vc != c->events.end()) vs << L"            M2GodForm::" << vc->second << L"(hWnd);\n";
+            if (sc != c->events.end()) vs << L"            M2GodForm::" << sc->second << L"(hWnd);\n";
+            vs << L"            return 0;\n";
+            vs << L"        }\n";
+        }
+        if (any) {
+            o << L"    case WM_VSCROLL:\n";
+            o << L"        if (M2God::InitDone()) {\n" << vs.str();
+            o << L"        }\n";
+            o << L"        break;\n";
+        }
+    }
+    // Form düzeyi olaylar (Faz 2.5) — sadece ekliyse üretilir
+    auto hasForm = [&](const wchar_t* ev) -> std::wstring {
+        auto it = g_model.formEvents.find(ev);
+        return it == g_model.formEvents.end() ? std::wstring() : it->second;
+    };
+    if (hasForm(L"Shown").size()) {
+        o << L"    case WM_SHOWWINDOW:\n";
+        o << L"        if (wParam && !s_m2Shown) { s_m2Shown = true; M2GodForm::" << hasForm(L"Shown") << L"(hWnd); }\n";
+        o << L"        break;\n";
+    }
+    if (hasForm(L"Resize").size()) {
+        o << L"    case WM_SIZE:\n";
+        o << L"        if (wParam != SIZE_MINIMIZED) M2GodForm::" << hasForm(L"Resize") << L"(hWnd);\n";
+        o << L"        break;\n";
+    }
+    if (hasForm(L"FormClosing").size()) {
+        o << L"    case WM_CLOSE:\n";
+        o << L"        M2GodForm::" << hasForm(L"FormClosing") << L"(hWnd);\n";
+        o << L"        break;\n";
+    }
+    if (hasForm(L"Activated").size()) {
+        o << L"    case WM_ACTIVATE:\n";
+        o << L"        if (LOWORD(wParam) != WA_INACTIVE) M2GodForm::" << hasForm(L"Activated") << L"(hWnd);\n";
+        o << L"        break;\n";
+    }
+    if (hasForm(L"MouseMove").size()) {
+        o << L"    case WM_MOUSEMOVE:\n        M2GodForm::" << hasForm(L"MouseMove") << L"(hWnd);\n        break;\n";
+    }
+    if (hasForm(L"MouseDown").size()) {
+        o << L"    case WM_LBUTTONDOWN:\n        M2GodForm::" << hasForm(L"MouseDown") << L"(hWnd);\n        break;\n";
+    }
+    if (hasForm(L"MouseUp").size() || hasForm(L"Click").size()) {
+        o << L"    case WM_LBUTTONUP:\n";
+        if (hasForm(L"MouseUp").size())  o << L"        M2GodForm::" << hasForm(L"MouseUp") << L"(hWnd);\n";
+        if (hasForm(L"Click").size())    o << L"        M2GodForm::" << hasForm(L"Click") << L"(hWnd);\n";
+        o << L"        break;\n";
+    }
+    if (hasForm(L"KeyDown").size()) {
+        o << L"    case WM_KEYDOWN:\n        M2GodForm::" << hasForm(L"KeyDown") << L"(hWnd);\n        break;\n";
+    }
+    if (hasForm(L"KeyUp").size()) {
+        o << L"    case WM_KEYUP:\n        M2GodForm::" << hasForm(L"KeyUp") << L"(hWnd);\n        break;\n";
+    }
+    if (hasForm(L"KeyPress").size()) {
+        o << L"    case WM_CHAR:\n        M2GodForm::" << hasForm(L"KeyPress") << L"(hWnd);\n        break;\n";
+    }
+    // NotifyIcon / BackgroundWorker dağıtımı (Faz 2.5)
+    for (auto* c : g_model.ctrls)
+        if (c->type == L"NotifyIcon")
+            o << L"    case WM_APP + 0x4E1:\n        if (M2GodForm::" << c->name << L") M2GodForm::" << c->name << L"->Dispatch(lParam);\n        return 0;\n";
+    for (auto* c : g_model.ctrls)
+        if (c->type == L"BackgroundWorker") {
+            o << L"    case WM_APP + 0x4E2:\n        if (M2GodForm::" << c->name << L") M2GodForm::" << c->name << L"->DispatchProgress((UINT)wParam);\n        return 0;\n";
+            o << L"    case WM_APP + 0x4E3:\n        if (M2GodForm::" << c->name << L") M2GodForm::" << c->name << L"->DispatchCompleted();\n        return 0;\n";
+        }
+    // WM_CTLCOLOR* — BackColor/ForeColor uygulanır
     o << L"    case WM_CTLCOLORSTATIC:\n";
     o << L"    case WM_CTLCOLOREDIT:\n";
     o << L"    case WM_CTLCOLORLISTBOX:\n";
@@ -990,6 +830,8 @@ std::wstring GenerateForm1Cpp() {
     o << L"        break;\n";
     o << L"    }\n";
     o << L"    case WM_DESTROY:\n";
+    if (hasForm(L"FormClosed").size())
+        o << L"        M2GodForm::" << hasForm(L"FormClosed") << L"(hWnd);\n";
     o << L"        M2GodForm::CleanupControls();\n";
     o << L"        PostQuitMessage(0);\n";
     o << L"        return 0;\n";
@@ -1018,6 +860,40 @@ std::wstring GenerateForm1Cpp() {
     o << L"\", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,\n";
     o << L"        rc.right - rc.left, rc.bottom - rc.top, NULL, NULL, hInst, NULL);\n";
     o << L"    if (!hWnd) return 0;\n";
+    o << L"    M2God::Form::Handle = hWnd;\n";
+    // Faz 2.5: form özellikleri (tasarımdan)
+    {
+        auto fp = [&](const wchar_t* k) -> std::wstring {
+            auto it = g_model.formProps.find(k);
+            return it == g_model.formProps.end() ? std::wstring() : it->second;
+        };
+        if (_wcsicmp(fp(L"MaximizeBox").c_str(), L"false") == 0)
+            o << L"    M2God::Form::MaximizeBox = false;\n";
+        if (_wcsicmp(fp(L"MinimizeBox").c_str(), L"false") == 0)
+            o << L"    M2God::Form::MinimizeBox = false;\n";
+        if (_wcsicmp(fp(L"ControlBox").c_str(), L"false") == 0)
+            o << L"    M2God::Form::ControlBox = false;\n";
+        {
+            std::wstring v = fp(L"FormBorderStyle");
+            const wchar_t* val = nullptr;
+            if (_wcsicmp(v.c_str(), L"None") == 0) val = L"M2God::FormBorderStyle::None";
+            else if (_wcsicmp(v.c_str(), L"FixedSingle") == 0) val = L"M2God::FormBorderStyle::FixedSingle";
+            else if (_wcsicmp(v.c_str(), L"Fixed3D") == 0) val = L"M2God::FormBorderStyle::Fixed3D";
+            else if (_wcsicmp(v.c_str(), L"FixedDialog") == 0) val = L"M2God::FormBorderStyle::FixedDialog";
+            else if (_wcsicmp(v.c_str(), L"FixedToolWindow") == 0) val = L"M2God::FormBorderStyle::FixedToolWindow";
+            else if (_wcsicmp(v.c_str(), L"SizableToolWindow") == 0) val = L"M2God::FormBorderStyle::SizableToolWindow";
+            if (val) o << L"    M2God::Form::FormBorderStyle = " << val << L";\n";
+        }
+        if (_wcsicmp(fp(L"TopMost").c_str(), L"true") == 0)
+            o << L"    M2God::Form::TopMost = true;\n";
+        {
+            std::wstring v = fp(L"WindowState");
+            if (_wcsicmp(v.c_str(), L"Maximized") == 0) o << L"    M2God::Form::WindowState = M2God::FormWindowState::Maximized;\n";
+            else if (_wcsicmp(v.c_str(), L"Minimized") == 0) o << L"    M2God::Form::WindowState = M2God::FormWindowState::Minimized;\n";
+        }
+        if (_wcsicmp(fp(L"StartPosition").c_str(), L"CenterScreen") == 0)
+            o << L"    M2God::Form::CenterToScreen();\n";
+    }
     o << L"    ShowWindow(hWnd, nCmdShow);\n";
     o << L"    UpdateWindow(hWnd);\n";
     o << L"    MSG msg;\n";
@@ -1033,7 +909,7 @@ std::wstring GenerateForm1Cpp() {
 
 std::wstring GenerateForm1H() {
     std::wostringstream o;
-    o << L"// Form1.h — M2GodWin32 UI Designer (Faz 2.4) tarafından üretilmiştir.\n";
+    o << L"// Form1.h — M2GodWin32 UI Designer (Faz 2.5) tarafından üretilmiştir.\n";
     o << L"#pragma once\n";
     o << L"#include <windows.h>\n";
     o << L"//== M2GOD:INCLUDE-BEGIN\n";

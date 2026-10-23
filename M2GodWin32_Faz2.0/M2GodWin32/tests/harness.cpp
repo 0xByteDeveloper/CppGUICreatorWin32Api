@@ -119,13 +119,15 @@ int main() {
         return f;
     };
     bool all = true;
-    all &= has(cpp, L"HWND button1 = NULL;");           // C2040 düzeltmesi
-    all &= has(cpp, L"case M2GodForm::IDC_BUTTON1:");   // WM_COMMAND yönlendirme
-    all &= has(cpp, L"if (ev == BN_CLICKED) M2GodForm::button1_Click(hWnd);");
+    all &= has(cpp, L"M2God::Button* button1 = nullptr;");   // Faz 2.4+ nesne stili (C2040 kökten çözüm)
+    all &= has(cpp, L"button1 = new M2God::Button(hWnd, IDC_BUTTON1"); // nesne yaratımı
+    all &= has(cpp, L"case M2GodForm::IDC_BUTTON1:");        // WM_COMMAND yönlendirme
+    all &= has(cpp, L"BN_CLICKED && M2GodForm::button1) M2GodForm::button1_Click(hWnd);"); // null-guard'lı çağrı
+    all &= has(cpp, L"M2God::InitDone() = true;");           // Faz 2.5: bildirim koruması
     all &= has(cpp, L"MessageBoxA(0, \"Mause\", \"Test\", 0);"); // kullanıcı kodu KORUNDU
-    all &= has(cpp, L"SetWindowSubclass(groupBox1, ContainerBridgeProc, 1, 0);"); // köprü
-    all &= has(cpp, L"groupBox1, (HMENU)(INT_PTR)IDC_RADIOBUTTON1"); // iç içe yaratım
-    all &= has(h, L"extern HWND button1;");
+    all &= has(cpp, L"SetWindowSubclass(groupBox1->Handle, ContainerBridgeProc, 1, 0);"); // köprü
+    all &= has(cpp, L"groupBox1->Handle, IDC_RADIOBUTTON1"); // iç içe yaratım (parent->Handle)
+    all &= has(h, L"extern M2God::Button* button1;");
     all &= has(h, L"void button1_Click(HWND hWnd);");
     printf(all ? "\n=== TUM DOGRULAMALAR GECTI ===\n" : "\n=== HATALAR VAR ===\n");
     return all ? 0 : 1;

@@ -151,6 +151,7 @@
     <ClInclude Include="src\toolbox.h" />
     <ClInclude Include="src\props.h" />
     <ClInclude Include="src\codegen.h" />
+    <ClInclude Include="src\global_template.inc" />
     <ClInclude Include="src\vsint.h" />
     <ClInclude Include="src\mainwnd.h" />
   </ItemGroup>
