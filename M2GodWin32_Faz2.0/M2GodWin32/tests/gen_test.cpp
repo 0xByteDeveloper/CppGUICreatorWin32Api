@@ -114,10 +114,16 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     ms->x = 0; ms->y = 0; ms->w = 900; ms->h = 28;
     ms->props[L"Text"] = L"Dosya\nDuzen";
 
-    // pictureBox1 — SizeMode
+    // pictureBox1 — ImageLocation (tasarimci emisyonu: yaratimda JPG yukler) + SizeMode
     Ctrl* pbx = g_model.Add(L"PictureBox", 20, 510);
     pbx->w = 100; pbx->h = 60;
     pbx->props[L"SizeMode"] = L"StretchImage";
+    pbx->props[L"ImageLocation"] = L"C:\\gtest\\m2foto.jpg";
+
+    // pictureBox2 — resmi Form1_Shown icinde M2God::Image::FromFile ile yuklenir (Zoom)
+    Ctrl* pbx2 = g_model.Add(L"PictureBox", 140, 510);
+    pbx2->w = 100; pbx2->h = 60;
+    pbx2->props[L"SizeMode"] = L"Zoom";
 
     // bileşenler: timer + backgroundWorker + openFileDialog + notifyIcon
     Ctrl* tm = g_model.Add(L"Timer", 0, 0);

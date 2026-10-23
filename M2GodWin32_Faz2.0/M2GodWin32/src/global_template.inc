@@ -1,6 +1,6 @@
 R"M2GODGLOBAL(// ============================================================================
-//  Global.h — M2GodWin32 UI Designer (Faz 2.5.1) TAM KAPSAMLI nesne kutuphanesi
-//  M2GOD-GLOBAL v2501
+//  Global.h — M2GodWin32 UI Designer (Faz 2.5.2) TAM KAPSAMLI nesne kutuphanesi
+//  M2GOD-GLOBAL v2502
 //  !! BU DOSYAYI DUZENLEMEYIN — tasarimci gerektiginde gunceller.
 //  Amac: Form1 olay kodlarinda WinForms benzeri sozdizimi (saf Win32 uzerinde):
 //      timer1->Enabled = false;                  // Timer durdurur
@@ -10,6 +10,7 @@ R"M2GODGLOBAL(// ===============================================================
 //      checkedListBox1->SetItemChecked(0, true);
 //      progressBar1->Value = 50;
 //      button1->BackColor = M2God::Color::Red;
+//      pictureBox1->Image = M2God::Image::FromFile(L"resim.png");  // PNG/JPG/GIF/BMP
 //      comboBox1->DropDownStyle = M2God::ComboBoxStyle::DropDownList;
 //      if (openFileDialog1->ShowDialog() == M2God::DialogResult::OK) ...
 //  HWND gerekirse: button1->Handle   (ya da dogrudan SendMessage(button1, ...))
@@ -2566,59 +2567,197 @@ public:
     bool AutoScroll = false;   // Win32'de otomatik kaydirma yok; bilgi amacli
 };
 
-// PictureBox — ozel pencere sinifi: Load/SizeMode/Image
+// PictureBox — ozel pencere sinifi: Load/SizeMode/Image (PNG/JPG/GIF destekli)
+// ---------------------------------------------------------------------------
+//  GDI+ DINAMIK yukleyici: gdiplus.dll her Windows'ta hazirdir. Ek olarak
+//  HICbir .lib veya header GEREKMEZ — VS2019 ve mingw'de oldugu gibi derlenir.
+// ---------------------------------------------------------------------------
+struct M2GpApi {
+    void* mod = nullptr;
+    ULONG_PTR token = 0;
+    bool started = false;
+    int (WINAPI* Startup)(ULONG_PTR*, void*, void*) = nullptr;
+    void (WINAPI* Shutdown)(ULONG_PTR) = nullptr;
+    int (WINAPI* LoadImageFromFile)(const wchar_t*, void**) = nullptr;
+    int (WINAPI* DisposeImage)(void*) = nullptr;
+    int (WINAPI* CloneImage)(void*, void**) = nullptr;
+    int (WINAPI* GetImageWidth)(void*, unsigned int*) = nullptr;
+    int (WINAPI* GetImageHeight)(void*, unsigned int*) = nullptr;
+    int (WINAPI* CreateFromHDC)(HDC, void**) = nullptr;
+    int (WINAPI* DeleteGraphics)(void*) = nullptr;
+    int (WINAPI* DrawImageRect)(void*, void*, float, float, float, float) = nullptr;
+    int (WINAPI* SetInterpolationMode)(void*, int) = nullptr;
+
+    bool FunctionsOk() const {
+        return mod && Startup && LoadImageFromFile && CreateFromHDC
+            && DrawImageRect && GetImageWidth && GetImageHeight;
+    }
+    bool Ensure() {
+        if (!mod) return false;
+        if (!started) {
+            // GdiplusStartupInput ile ayni yerlesim (UINT32;void*;BOOL;BOOL)
+            struct In { unsigned int ver; void* dbg; int supbg; int supext; } in;
+            in.ver = 1; in.dbg = nullptr; in.supbg = 0; in.supext = 0;
+            started = (Startup(&token, &in, nullptr) == 0 /*Ok*/);
+        }
+        return started;
+    }
+};
+inline M2GpApi& M2Gp() {
+    static M2GpApi api;
+    if (!api.mod) {
+        api.mod = (void*)LoadLibraryW(L"gdiplus.dll");
+        if (api.mod) {
+            HMODULE m = (HMODULE)api.mod;
+#define M2GPLOAD(fld, name) api.fld = (decltype(api.fld))(void*)GetProcAddress(m, name)
+            M2GPLOAD(Startup,               "GdiplusStartup");
+            M2GPLOAD(Shutdown,              "GdiplusShutdown");
+            M2GPLOAD(LoadImageFromFile,     "GdipLoadImageFromFile");
+            M2GPLOAD(DisposeImage,          "GdipDisposeImage");
+            M2GPLOAD(CloneImage,            "GdipCloneImage");
+            M2GPLOAD(GetImageWidth,         "GdipGetImageWidth");
+            M2GPLOAD(GetImageHeight,        "GdipGetImageHeight");
+            M2GPLOAD(CreateFromHDC,         "GdipCreateFromHDC");
+            M2GPLOAD(DeleteGraphics,        "GdipDeleteGraphics");
+            M2GPLOAD(DrawImageRect,        "GdipDrawImageRect");
+            M2GPLOAD(SetInterpolationMode,  "GdipSetInterpolationMode");
+#undef M2GPLOAD
+        }
+    }
+    return api;
+}
+inline bool M2GdiplusEnsure() {
+    M2GpApi& g = M2Gp();
+    return g.FunctionsOk() && g.Ensure();
+}
+
+// ---------------------------------------------------------------------------
+//  M2God::Image — dosyadan resim (PNG/JPG/GIF/BMP/TIFF/ICO/EMF/WMF)
+//      pictureBox1->Image = M2God::Image::FromFile(L"resim.png");
+//      if (img) { int w = img.Width(); int h = img.Height(); }
+// ---------------------------------------------------------------------------
+class Image {
+    void* impl = nullptr;   // GpImage*
+public:
+    Image() {}
+    explicit Image(void* p) : impl(p) {}
+    Image(const Image& o) : impl(nullptr) {
+        if (o.impl && M2Gp().CloneImage) {
+            void* c = nullptr;
+            if (M2Gp().CloneImage(o.impl, &c) == 0 /*Ok*/ && c) impl = c;
+        }
+    }
+    Image& operator=(const Image& o) {
+        if (this != &o) {
+            Dispose();
+            if (o.impl && M2Gp().CloneImage) {
+                void* c = nullptr;
+                if (M2Gp().CloneImage(o.impl, &c) == 0 /*Ok*/ && c) impl = c;
+            }
+        }
+        return *this;
+    }
+    Image(Image&& o) : impl(o.impl) { o.impl = nullptr; }
+    Image& operator=(Image&& o) {
+        if (this != &o) { Dispose(); impl = o.impl; o.impl = nullptr; }
+        return *this;
+    }
+    ~Image() { Dispose(); }
+
+    static Image FromFile(const std::wstring& path) {
+        Image r;
+        if (M2GdiplusEnsure() && M2Gp().LoadImageFromFile) {
+            void* p = nullptr;
+            if (M2Gp().LoadImageFromFile(path.c_str(), &p) == 0 /*Ok*/ && p) r.impl = p;
+            else if (p && M2Gp().DisposeImage) M2Gp().DisposeImage(p);
+        }
+        return r;
+    }
+    bool IsValid() const { return impl != nullptr; }
+    operator bool() const { return impl != nullptr; }
+    int Width()  const { unsigned int v = 0; if (impl && M2Gp().GetImageWidth)  M2Gp().GetImageWidth(impl, &v);  return (int)v; }
+    int Height() const { unsigned int v = 0; if (impl && M2Gp().GetImageHeight) M2Gp().GetImageHeight(impl, &v); return (int)v; }
+    void* Native() const { return impl; }
+    void  Steal() { impl = nullptr; }
+    void  Dispose() { if (impl) { if (M2Gp().DisposeImage) M2Gp().DisposeImage(impl); impl = nullptr; } }
+};
+
+// ---------------------------------------------------------------------------
+//  PictureBox — resim kutusu
+//      pictureBox1->Image = M2God::Image::FromFile(L"resim.png");
+//      pictureBox1->Image = (HBITMAP)LoadImageW(...);            // eski BMP yolu
+//      pictureBox1->Load(L"resim.jpg");  pictureBox1->ImageLocation = L"x.png";
+//      pictureBox1->SizeMode = M2God::PictureBoxSizeMode::Zoom;
+// ---------------------------------------------------------------------------
 struct PicState {
-    HBITMAP bmp = nullptr;
-    int sm = 0;              // M2God::PictureBoxSizeMode
+    HBITMAP bmp = nullptr;      // GDI yolu (LoadImage ile yuklenen BMP)
+    void* gimg = nullptr;       // GDI+ yolu (GpImage* — PNG/JPG/GIF/...)
+    int sm = 0;                 // M2God::PictureBoxSizeMode
     std::wstring loc;
 };
 inline std::map<HWND, PicState>& PicTable() {
     static std::map<HWND, PicState> tbl;
     return tbl;
 }
-inline void M2DrawPic(HDC dc, RECT rc, PicState& ps) {
+inline void M2PicNoImage(HDC dc, const RECT& rc) {
+    // resim-yok isareti (capraz cizgiler)
+    HPEN pen = CreatePen(PS_SOLID, 1, RGB(160, 160, 160));
+    HPEN op = (HPEN)SelectObject(dc, pen);
+    MoveToEx(dc, rc.left, rc.top, nullptr); LineTo(dc, rc.right, rc.bottom);
+    MoveToEx(dc, rc.right - 1, rc.top, nullptr); LineTo(dc, rc.left, rc.bottom - 1);
+    SelectObject(dc, op); DeleteObject(pen);
+}
+inline void M2DrawPic(HWND h, HDC dc, RECT rc, PicState& ps) {
     COLORREF back = RGB(240, 240, 240);
     HBRUSH br = CreateSolidBrush(back); FillRect(dc, &rc, br); DeleteObject(br);
-    if (!ps.bmp) {
-        // resim-yok isareti
-        HPEN pen = CreatePen(PS_SOLID, 1, RGB(160, 160, 160));
-        HPEN op = (HPEN)SelectObject(dc, pen);
-        MoveToEx(dc, rc.left, rc.top, nullptr); LineTo(dc, rc.right, rc.bottom);
-        MoveToEx(dc, rc.right - 1, rc.top, nullptr); LineTo(dc, rc.left, rc.bottom - 1);
-        SelectObject(dc, op); DeleteObject(pen);
+    int iw = 0, ih = 0;
+    if (ps.gimg) {
+        unsigned int w = 0, hh = 0;
+        if (M2Gp().GetImageWidth)  M2Gp().GetImageWidth(ps.gimg, &w);
+        if (M2Gp().GetImageHeight) M2Gp().GetImageHeight(ps.gimg, &hh);
+        iw = (int)w; ih = (int)hh;
+    } else if (ps.bmp) {
+        BITMAP bm;
+        if (GetObjectW(ps.bmp, sizeof(bm), &bm)) { iw = bm.bmWidth; ih = bm.bmHeight; }
+    }
+    if (iw <= 0 || ih <= 0) { M2PicNoImage(dc, rc); return; }
+    int cw = rc.right - rc.left, ch = rc.bottom - rc.top;
+    int dx = 0, dy = 0, dw = iw, dh = ih;
+    bool stretch = false;
+    switch (ps.sm) {
+    case 1:  // StretchImage — kutuyu tamamen doldur (en-boy bozulabilir)
+        dw = cw; dh = ch; stretch = true; break;
+    case 2:  // AutoSize — kutuyu resme gore buyut
+        if (h) SetWindowPos(h, nullptr, 0, 0, iw, ih, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        break;
+    case 3: { // CenterImage — ortala (tasma kirpilir)
+        dx = (cw - iw) / 2 < 0 ? 0 : (cw - iw) / 2;
+        dy = (ch - ih) / 2 < 0 ? 0 : (ch - ih) / 2;
+        break; }
+    case 4: { // Zoom — en-boy koru, ortala
+        double sc = (double)cw / iw; if ((double)ih * sc > ch) sc = (double)ch / ih;
+        dw = (int)(iw * sc); dh = (int)(ih * sc);
+        dx = (cw - dw) / 2; dy = (ch - dh) / 2;
+        stretch = true; break; }
+    default:  // Normal — sol ust, dogal boyut
+        break;
+    }
+    if (ps.gimg) {
+        void* gfx = nullptr;
+        if (M2Gp().CreateFromHDC && M2Gp().CreateFromHDC(dc, &gfx) == 0 /*Ok*/ && gfx) {
+            if (stretch && M2Gp().SetInterpolationMode) M2Gp().SetInterpolationMode(gfx, 7 /*HighQualityBicubic*/);
+            if (M2Gp().DrawImageRect) M2Gp().DrawImageRect(gfx, ps.gimg, (float)dx, (float)dy, (float)dw, (float)dh);
+            if (M2Gp().DeleteGraphics) M2Gp().DeleteGraphics(gfx);
+        }
         return;
     }
     HDC mdc = CreateCompatibleDC(dc);
     HGDIOBJ old = SelectObject(mdc, ps.bmp);
-    BITMAP bm; GetObjectW(ps.bmp, sizeof(bm), &bm);
-    int iw = bm.bmWidth, ih = bm.bmHeight;
-    int cw = rc.right - rc.left, ch = rc.bottom - rc.top;
-    switch (ps.sm) {
-    case 1: {  // StretchImage
+    if (stretch) {
         SetStretchBltMode(dc, HALFTONE);
-        StretchBlt(dc, 0, 0, cw, ch, mdc, 0, 0, iw, ih, SRCCOPY);
-        break;
-    }
-    case 2: {  // AutoSize — pencereyi resme gore buyut
-        HWND h = WindowFromDC(dc);
-        if (h) SetWindowPos(h, nullptr, 0, 0, iw, ih, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-        BitBlt(dc, 0, 0, iw, ih, mdc, 0, 0, SRCCOPY);
-        break;
-    }
-    case 3: {  // CenterImage
-        BitBlt(dc, (cw - iw) / 2 < 0 ? 0 : (cw - iw) / 2, (ch - ih) / 2 < 0 ? 0 : (ch - ih) / 2, iw, ih, mdc, 0, 0, SRCCOPY);
-        break;
-    }
-    case 4: {  // Zoom — en-boy koru
-        double sc = (double)cw / iw; if ((double)ih * sc > ch) sc = (double)ch / ih;
-        int dw = (int)(iw * sc), dh = (int)(ih * sc);
-        SetStretchBltMode(dc, HALFTONE);
-        StretchBlt(dc, (cw - dw) / 2, (ch - dh) / 2, dw, dh, mdc, 0, 0, iw, ih, SRCCOPY);
-        break;
-    }
-    default:   // Normal
-        BitBlt(dc, 0, 0, iw, ih, mdc, 0, 0, SRCCOPY);
-        break;
+        StretchBlt(dc, dx, dy, dw, dh, mdc, 0, 0, iw, ih, SRCCOPY);
+    } else {
+        BitBlt(dc, dx, dy, dw, dh, mdc, 0, 0, SRCCOPY);
     }
     SelectObject(mdc, old);
     DeleteDC(mdc);
@@ -2627,9 +2766,18 @@ inline LRESULT CALLBACK M2PicProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     if (m == WM_PAINT) {
         PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
         RECT rc; GetClientRect(h, &rc);
-        M2DrawPic(dc, rc, PicTable()[h]);
+        std::map<HWND, PicState>::iterator it = PicTable().find(h);
+        if (it != PicTable().end()) M2DrawPic(h, dc, rc, it->second);
         EndPaint(h, &ps);
         return 0;
+    }
+    if (m == WM_NCDESTROY) {   // resimleri serbest birak
+        std::map<HWND, PicState>::iterator it = PicTable().find(h);
+        if (it != PicTable().end()) {
+            if (it->second.gimg && M2Gp().DisposeImage) M2Gp().DisposeImage(it->second.gimg);
+            if (it->second.bmp) DeleteObject(it->second.bmp);
+            PicTable().erase(it);
+        }
     }
     return DefWindowProcW(h, m, w, l);
 }
@@ -2664,12 +2812,31 @@ public:
         }
         operator int() const { return c->Handle ? PicTable()[c->Handle].sm : 0; }
     } SizeMode{ this };
+    // pictureBox1->Image = M2God::Image::FromFile(L"resim.png");
+    // pictureBox1->Image = (HBITMAP)LoadImageW(...);   // eski BMP yolu
     class ImageProp {
         PictureBox* c;
     public:
         explicit ImageProp(PictureBox* o) : c(o) {}
+        ImageProp& operator=(M2God::Image img) {   // degerle al (gecici/kopya -> sahiplen)
+            if (c->Handle) {
+                PicState& st = PicTable()[c->Handle];
+                if (st.gimg && M2Gp().DisposeImage) M2Gp().DisposeImage(st.gimg);
+                st.gimg = img.Native();
+                img.Steal();
+                st.bmp = nullptr;
+                InvalidateRect(c->Handle, nullptr, TRUE);
+            }
+            return *this;
+        }
         ImageProp& operator=(HBITMAP bmp) {
-            if (c->Handle) { PicTable()[c->Handle].bmp = bmp; InvalidateRect(c->Handle, nullptr, TRUE); }
+            if (c->Handle) {
+                PicState& st = PicTable()[c->Handle];
+                if (st.gimg && M2Gp().DisposeImage) M2Gp().DisposeImage(st.gimg);
+                st.gimg = nullptr;
+                st.bmp = bmp;
+                InvalidateRect(c->Handle, nullptr, TRUE);
+            }
             return *this;
         }
         operator HBITMAP() const { return c->Handle ? PicTable()[c->Handle].bmp : nullptr; }
@@ -2684,14 +2851,29 @@ public:
         }
         operator std::wstring() const { return c->Handle ? PicTable()[c->Handle].loc : std::wstring(); }
     } ImageLocation{ this };
-    void Load(const std::wstring& path) {
-        if (!Handle) return;
+    // pictureBox1->Load(L"resim.png");  -> PNG/JPG/GIF/TIFF/BMP yukler, true = basarili
+    bool Load(const std::wstring& path) {
+        if (!Handle) return false;
+        PicState& st = PicTable()[Handle];
+        if (M2GdiplusEnsure() && M2Gp().LoadImageFromFile) {
+            void* p = nullptr;
+            if (M2Gp().LoadImageFromFile(path.c_str(), &p) == 0 /*Ok*/ && p) {
+                if (st.gimg && M2Gp().DisposeImage) M2Gp().DisposeImage(st.gimg);
+                st.gimg = p; st.bmp = nullptr; st.loc = path;
+                InvalidateRect(Handle, nullptr, TRUE);
+                return true;
+            }
+            if (p && M2Gp().DisposeImage) M2Gp().DisposeImage(p);
+        }
         HBITMAP bmp = (HBITMAP)LoadImageW(nullptr, path.c_str(), IMAGE_BITMAP, 0, 0,
             LR_LOADFROMFILE | LR_CREATEDIBSECTION);
         if (bmp) {
-            PicTable()[Handle].bmp = bmp;
+            if (st.gimg && M2Gp().DisposeImage) M2Gp().DisposeImage(st.gimg);
+            st.gimg = nullptr; st.bmp = bmp; st.loc = path;
             InvalidateRect(Handle, nullptr, TRUE);
+            return true;
         }
+        return false;
     }
 };
 

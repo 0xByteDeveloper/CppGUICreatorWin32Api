@@ -498,7 +498,7 @@ static int ShowWelcomeDialog(std::wstring& openPath) {
     EnsureDialogClass();
     int result = 0;
     HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"M2GOD_CODEDLG",
-        L"M2GodWin32 Faz 2.5.1 — Başlangıç", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        L"M2GodWin32 Faz 2.5.2 — Başlangıç", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         360, 200, 640, 420, nullptr, nullptr, g_hInst, nullptr);
     SetWindowLongW(dlg, GWL_STYLE, (GetWindowLongW(dlg, GWL_STYLE) & ~WS_MAXIMIZEBOX) | WS_CAPTION);
     HWND hint = CreateWindowExW(0, L"STATIC",
@@ -959,7 +959,7 @@ static LRESULT CALLBACK FrameProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             return 0;
         case CMD_ABOUT:
             MessageBoxW(h,
-                L"M2GodWin32 — Faz 2.5.1 God Mode MVP\n\n"
+                L"M2GodWin32 — Faz 2.5.2 God Mode MVP\n\n"
                 L"Win32 API Görsel Form Tasarımcısı\n"
                 L"• Config_info.json kataloğu ile tüm .NET elemanları\n"
                 L"• Sürükle-bırak VE tıkla-yerleştir (ESC = iptal)\n"
@@ -970,12 +970,13 @@ static LRESULT CALLBACK FrameProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 L"  (yeni form: öncekini koru / sil seçenekleri)\n"
                 L"• Otomatik kayıt + Form1.h/.cpp + Global.h marker'lı üretim + VS2019\n"
                 L"• Renk/Yazı tipi/Boyut/enum düzenleyicileri (ChooseColor/ChooseFont)\n\n"
-                L"Faz 2.5 yenilikleri (TAM KAPSAMLI M2God SDK v2501, C++14 uyumlu):\n"
+                L"Faz 2.5 yenilikleri (TAM KAPSAMLI M2God SDK v2502, C++14 uyumlu):\n"
                 L"• Global.h ~3200 satır: Config_info.json'daki TÜM kontroller\n"
                 L"  timer1->Enabled = false;  textBox1->ReadOnly = true;\n"
                 L"  comboBox1->DropDownStyle = M2God::ComboBoxStyle::DropDownList;\n"
                 L"  checkedListBox1->SetItemChecked(0,true);  progressBar1->PerformStep();\n"
                 L"  button1->BackColor = M2God::Color::Red;  (30+ renk sabiti)\n"
+L"  pictureBox1->Image = M2God::Image::FromFile(L\"resim.png\");  // PNG/JPG/GIF\n"
                 L"• Diyaloglar: OpenFileDialog/SaveFileDialog/ColorDialog/FontDialog/\n"
                 L"  FolderBrowserDialog — ShowDialog() == M2God::DialogResult::OK\n"
                 L"• Bileşenler: NotifyIcon, ToolTip, BackgroundWorker, Process, SerialPort\n"
@@ -995,7 +996,7 @@ static LRESULT CALLBACK FrameProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case MWM_MODEL_CHANGED:
         g_modelDirty = true;
         {
-            std::wstring t = L"M2GodWin32 Faz 2.5.1";
+            std::wstring t = L"M2GodWin32 Faz 2.5.2";
             if (!s_file.empty()) t += L" — " + GetFileName(s_file) + (g_modelDirty ? L" *" : L"");
             SetWindowTextW(h, t.c_str());
         }
@@ -1011,7 +1012,7 @@ static LRESULT CALLBACK FrameProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                     SYSTEMTIME st; GetLocalTime(&st);
                     wchar_t tb[64]; swprintf(tb, 64, L"%02d:%02d:%02d", st.wHour, st.wMinute, st.wSecond);
                     Status(std::wstring(L"Otomatik kaydedildi: ") + GetFileName(s_file) + L"  " + tb);
-                    std::wstring t = L"M2GodWin32 Faz 2.5.1 — " + GetFileName(s_file);
+                    std::wstring t = L"M2GodWin32 Faz 2.5.2 — " + GetFileName(s_file);
                     SetWindowTextW(h, t.c_str());
                 }
             }
@@ -1102,7 +1103,7 @@ int Run(HINSTANCE hInst, LPWSTR cmdLine) {
     wc.lpszClassName = L"M2GOD_MAIN";
     wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(1));
     RegisterClassW(&wc);
-    HWND h = CreateWindowExW(0, L"M2GOD_MAIN", L"M2GodWin32 Faz 2.5.1 — God Mode MVP",
+    HWND h = CreateWindowExW(0, L"M2GOD_MAIN", L"M2GodWin32 Faz 2.5.2 — God Mode MVP",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         8, 8, 1424, 856, nullptr, nullptr, hInst, nullptr);
     g_hMain = h;

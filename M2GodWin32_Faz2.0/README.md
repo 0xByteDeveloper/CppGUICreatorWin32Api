@@ -1,10 +1,37 @@
-# M2GodWin32 — Faz 2.5.1 God Mode MVP
+# M2GodWin32 — Faz 2.5.2 God Mode MVP
 
 **Visual Studio 2019 C++ CLR Form Designer deneyimini Win32 API ile yaşatan, tam kapsamlı görsel UI tasarım ortamı.**
 
-> Bu proje `CppGUICreatorWin32Api` deposunun **Faz 2.5.1** geliştirme aşamasıdır.
+> Bu proje `CppGUICreatorWin32Api` deposunun **Faz 2.5.2** geliştirme aşamasıdır.
 > Katalog kaynağı olarak depodaki **Config_info.json** (.NET Framework WinForms tam eleman kataloğu: 144 eleman, tüm property'ler + event'ler + 203 enum) kullanılır.
 
+
+---
+
+## Faz 2.5.2 — PictureBox GDI+ resim desteği (Global.h v2502)
+
+İki düzeltme: (1) v2500–v2501'de PictureBox kodundaki **derleme hatası** (`PicTable()]`) giderildi — PictureBox içeren hiçbir proje v2501 Global.h ile derlenemiyordu; (2) `Image` artık **GDI+ ile PNG/JPG/GIF/TIFF/ICO** yükleyebiliyor.
+
+```cpp
+// PNG / JPG / GIF / BMP / TIFF / ICO — hepsi:
+pictureBox1->Image = M2God::Image::FromFile(L"C:\\\\resim.png");
+
+// Tek satır kolay yol:
+pictureBox1->Load(L"resim.jpg");            // bool döner: true = yüklendi
+
+// Tasarımcıda ImageLocation özelliğine yol yazın — yaratımda otomatik yüklenir
+pictureBox1->ImageLocation = L"resim.png";
+
+// Boyutlandırma (5 mod):
+pictureBox1->SizeMode = M2God::PictureBoxSizeMode::Zoom;  // Normal | StretchImage | AutoSize | CenterImage | Zoom
+
+// Eski HBITMAP yolu da çalışmaya devam eder:
+pictureBox1->Image = (HBITMAP)LoadImageW(0, L"r.bmp", IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
+```
+
+**Teknik:** `gdiplus.dll` **dinamik yüklenir** (LoadLibrary + flat API) — ne ek `.lib` ne `gdiplus.h` ne proje ayarı gerekir; VS2019 ve mingw'de olduğu gibi derlenir. StretchImage/Zoom modlarında HighQualityBicubic ölçekleme; WM_NCDESTROY'da resimler otomatik serbest bırakılır.
+
+**Doğrulama:** Üretilen proje C++14 **ve** C++17 ile 0 hata; wine altında PictureBox'a JPG (`ImageLocation`) **ve** PNG (`M2God::Image::FromFile`) yüklendi — her ikisi de ekranda görüntülendi (EkranGoruntuleri_Faz2.5.2/).
 
 ---
 
@@ -45,7 +72,7 @@ Config_info.json'daki **tüm** toolbox elemanları artık üretilen projede nesn
 - **MenuStrip/ToolStrip**: gerçek HMENU — Items->Add/AddChild + Apply() + ItemClick (WndProc DispatchCommand)
 - **ContextMenuStrip**: Items API + Show(x,y) (TrackPopupMenu) + ItemClick
 - **Panel**: BorderStyle (FixedSingle/Fixed3D/None yeniden stillenir)
-- **PictureBox**: özel M2GOD_PIC sınıfı — Load(path), Image (HBITMAP), ImageLocation, SizeMode (Normal/StretchImage/AutoSize/CenterImage/Zoom)
+- **PictureBox**: özel M2GOD_PIC sınıfı — **Image (M2God::Image — GDI+ PNG/JPG/GIF; ya da HBITMAP)**, Load(path), ImageLocation, SizeMode (Normal/StretchImage/AutoSize/CenterImage/Zoom)
 - **Label/LinkLabel/Button/CheckBox/RadioButton/GroupBox**: TextAlign (ContentAlignment), BorderStyle, AutoEllipsis, FlatStyle, CheckState (Indeterminate), PerformClick
 
 ### Bileşenler ve diyaloglar (görsel olmayan ama GERÇEK çalışan)
