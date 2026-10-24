@@ -1,12 +1,50 @@
-# M2GodWin32 — Faz 2.6.1 God Mode MVP
+# M2GodWin32 — Faz 2.6.2 God Mode MVP
 
 **Visual Studio 2019 C++ CLR Form Designer deneyimini Win32 API ile yaşatan, tam kapsamlı görsel UI tasarım ortamı.**
 
-> Bu proje `CppGUICreatorWin32Api` deposunun **Faz 2.6.1** geliştirme aşamasıdır.
+> Bu proje `CppGUICreatorWin32Api` deposunun **Faz 2.6.2** geliştirme aşamasıdır.
 > Katalog kaynağı olarak depodaki **Config_info.json** (.NET Framework WinForms tam eleman kataloğu: 144 eleman, tüm property'ler + event'ler + 203 enum) kullanılır.
 
 
 ---
+
+## Faz 2.6.2 — TabControl tasarım etkileşimi düzeltmeleri (kullanıcı bildirdi)
+
+Kullanıcı raporu: *"tabpage2 sekmesine basıyorum geçmiyor (derleyince geçiyor ama UI düzenleyicide geçmiyor);
+tabpage'e tıklayınca içine tıklamışım gibi oluyor; TabControl'ü sürükleyeceğim içinden tabpage sürükleniyor;
+sayfa gövdesi sürüklenemez olmalı; boyutlandırma (size optimizasyonu) neden yok?"* — dört kusur da kökten giderildi:
+
+1. **Sekme geçişi artık ANINDA görsel (bayat piksel sorunu kökten çözüldü).** Sekme şeridine
+   tıklayınca içsel durum (SelectedTab + ShowWindow) hep doğru kuruluyordu ama EKRAN
+   yeniden boyanmıyordu: gizlenen sayfanın pikselleri alttaki kardeş sayfa yeniden
+   boyanmadığı için ekranda kalıyordu. `UpdateTabPages` artık (1) seçili sayfayı
+   z-sırasının en üstüne taşır, (2) alanı `RDW_UPDATENOW` ile SENKRON ve tam
+   (çocuklar dahil) yeniden boyar. Kanıt: tabPage1'deki buton, tabPage2'ye geçince
+   anında kayboluyor, geri dönünce anında geliyor (EkranGoruntuleri_Faz2.6.2/).
+
+2. **Sayfa gövdesi artık sürüklenemez/taşınmaz — gövde TÜM TabControl'ü yönetir.**
+   Boş sayfa zeminine tıklayınca/dengelenince seçim ve sürükleme TabPage yerine
+   TabControl'e gider (VS davranışı + kullanıcı isteği). Böylece boyutlandırma
+   tutamaçları da anında görünür. Sayfa İÇİNDEKİ kontroller (buton vb.) aynen
+   kendileri seçilir/sürüklenir. Sayfa seçimi (sekme şeridi tıklaması) çerçevesi
+   artık TabControl çevresinde çizilir (sayfa dikdörtgeni sayfa HWND'si altında
+   kalıp görünmez olduğu için) ve tutamaç isabeti sayfa seçiminde devre dışıdır.
+
+3. **Sekme başlığı isabet alanı genişletildi.** `TCM_HITTEST` `TCHT_ONITEM` yalnız
+   simge/metin üstünü yakalıyordu; `flags=0` ile başlığın TAM dikdörtgeni
+   (dolgu boşlukları dahil) isabetli — başlık kenarına tıklamak artık ıskalamaz.
+
+4. **KRİTİK (üretilen kod): olayı olmayan TabControl'de runtime sayfa geçişi ÇALIŞMIYORDU.**
+   `GenerateForm1Cpp` içindeki WM_NOTIFY emisyonu `events.empty() → continue` ile
+   olayı olmayan kontrolleri atlıyordu; "sayfa geçişi her zaman" yorumlu
+   `__SELCHANGED` satırı hiçbir zaman üretilmiyordu. Düzeltme: TabControl olayı
+   olmasa bile WM_NOTIFY router'ı (`__SelChanged()`) üretilir. Kanıt: üretim
+   sonrası wine'da tabPage2'ye tıkla → probe ile page1 `vis=0`, page2 `vis=1`.
+
+**Doğrulama zinciri:** tasarımda (yerleştir → butonu sayfaya koy → sekme geçiş görsel →
+gövde tıkla/sürükle = tüm TabControl → tutamaçtan boyutla 220×150→312×232 → akıllı ok menüsü)
++ regresyon harness'i **TÜM DOĞRULAMALAR GEÇTİ** + üretilen proje C++14/C++17 **0 hata**
++ runtime sayfa geçişi probe kanıtlı (EkranGoruntuleri_Faz2.6.2/).
 
 ## Faz 2.6.1 — Kritik düzeltmeler: ESC zinciri + model yükleme çift-sayfa bug'ı + panoda sayfa taşıma
 

@@ -848,7 +848,13 @@ std::wstring GenerateForm1Cpp() {
         std::wostringstream nt;
         bool any = false;
         for (auto* c : g_model.ctrls) {
-            if (c->nonVisual || c->events.empty()) continue;
+            if (c->nonVisual) continue;
+            // FAZ 2.6.2 KRİTİK DÜZELTME: TabControl olayı olmasa BİLE WM_NOTIFY
+            // bloğuna girmeli — __SelChanged() olmadan üretilen uygulamada sekme
+            // geçişi ÇALIŞMIYORDU ("events.empty() → continue" router'ı da
+            // atlıyordu; "sayfa geçişi her zaman" yorumu hiçbir zaman yürümedi).
+            bool isTab = _wcsicmp(c->type.c_str(), L"TabControl") == 0;
+            if (c->events.empty() && !isTab) continue;
             std::vector<std::pair<std::wstring, std::wstring>> lines; // (koşul-ek, handler)
             auto has = [&](const wchar_t* ev) -> std::wstring {
                 auto it = c->events.find(ev);

@@ -499,7 +499,7 @@ static int ShowWelcomeDialog(std::wstring& openPath) {
     EnsureDialogClass();
     int result = 0;
     HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"M2GOD_CODEDLG",
-        L"M2GodWin32 Faz 2.6.1 — Başlangıç", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        L"M2GodWin32 Faz 2.6.2 — Başlangıç", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         360, 200, 640, 420, nullptr, nullptr, g_hInst, nullptr);
     SetWindowLongW(dlg, GWL_STYLE, (GetWindowLongW(dlg, GWL_STYLE) & ~WS_MAXIMIZEBOX) | WS_CAPTION);
     HWND hint = CreateWindowExW(0, L"STATIC",
@@ -983,7 +983,7 @@ static LRESULT CALLBACK FrameProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             return 0;
         case CMD_ABOUT:
             MessageBoxW(h,
-                L"M2GodWin32 — Faz 2.6.1 God Mode MVP\n\n"
+                L"M2GodWin32 — Faz 2.6.2 God Mode MVP\n\n"
                 L"Win32 API Görsel Form Tasarımcısı\n"
                 L"• Config_info.json kataloğu ile tüm .NET elemanları\n"
                 L"• Sürükle-bırak VE tıkla-yerleştir (ESC = iptal)\n"
@@ -1008,6 +1008,13 @@ L"  pictureBox1->Image = M2God::Image::FromFile(L\"resim.png\");  // PNG/JPG/GIF
                 L"• Olay yönlendirme: WM_NOTIFY/WM_HSCROLL + DoubleClick/TextChanged/\n"
                 L"  ItemCheck/AfterSelect/Scroll/ValueChanged + form Mouse/Key olayları\n"
                 L"•MenuStrip/ContextMenuStrip gerçek HMENU + ItemClick\n\n"
+                L"Faz 2.6.2 yenilikleri (TabControl tasarım etkileşimi düzeltmeleri):\n"
+                L"• Sekme başlığına tıkla → sayfa ANINDA görsel olarak değişir\n"
+                L"  (bayat piksel sorunu kökten giderildi: senkron tam yeniden boyama)\n"
+                L"• Sayfa gövdesi sürüklenemez: gövdeye tıkla/sürükle → TÜM TabControl\n"
+                L"  seçilir/taşınır, boyutlandırma tutamaçları anında görünür\n"
+                L"• Sayfa seçimi TabControl çerçevesinde gösterilir (VS davranışı)\n"
+                L"• Sekme başlığı isabeti tüm başlık dikdörtgenine genişletildi\n\n"
                 L"Faz 2.6.1 yenilikleri (TabControl/TabPage koleksiyonu + tam kapsam + Escape üst seçim):\n"
                 L"• Sekme şeridine tıkla → tabPage seçilir (VS davranışı)\n"
                 L"• Seçili TabControl'de sağ üstte AKILLI OK: Sekme Ekle / Sekme Kaldır\n"

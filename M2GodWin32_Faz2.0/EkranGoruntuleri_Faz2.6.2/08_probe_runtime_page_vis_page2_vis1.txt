@@ -1,0 +1,4 @@
+﻿MAIN: 'F'
+  [S] '' vis=1 rect=(156,150,376,300) parent=[M] id=3001
+    [M] 't' vis=0 rect=(162,175,370,294) parent=[S] id=3002
+    [M] 't' vis=1 rect=(162,175,370,294) parent=[S] id=3003

@@ -15,8 +15,8 @@ BEGIN
     BEGIN
       VALUE "FileDescription", "M2GodWin32 UI Designer (Win32 API)"
       VALUE "ProductName",     "M2GodWin32"
-      VALUE "FileVersion",     "2.6.1.0"
-      VALUE "ProductVersion",  "2.6.1.0"
+      VALUE "FileVersion",     "2.6.2.0"
+      VALUE "ProductVersion",  "2.6.2.0"
       VALUE "OriginalFilename","M2GodWin32.exe"
     END
   END

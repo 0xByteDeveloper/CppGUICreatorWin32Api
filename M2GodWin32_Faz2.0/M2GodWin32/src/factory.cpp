@@ -361,6 +361,20 @@ void UpdateTabPages(HWND surf, Ctrl* tab) {
             ShowWindow(p->hwnd, (p == selPg) ? SW_SHOWNA : SW_HIDE);
         }
     }
+    // FAZ 2.6.2 KRİTİK DÜZELTME: sayfa geçişi GÖRSEL olarak uygulanmalıydı.
+    // ShowWindow(gizle/göster) içsel durumu doğru kuruyordu ama EKRAN BAYAT
+    // KALIYORDU: gizlenen sayfanın (ve içeriğinin) pikselleri, altındaki
+    // kardeş sayfa yeniden boyanmadığı için ekranda kalıyordu (tasarımcıda
+    // "sekmeye basıyorum, sayfa geçmiyor" hatasının kökü).
+    // Çözüm: (1) seçili sayfa z-sırasının en üstüne taşınır, (2) alan
+    // RDW_UPDATENOW ile SENKRON ve TAM (çocuklar dahil) yeniden boyanır.
+    if (selPg && selPg->hwnd && IsWindow(selPg->hwnd)) {
+        SetWindowPos(selPg->hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        RedrawWindow(selPg->hwnd, nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    }
+    RedrawWindow(tab->hwnd, nullptr, nullptr,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
     InvalidateRect(tab->hwnd, nullptr, TRUE);
 }
 
@@ -372,13 +386,15 @@ void SelectTabPage(HWND surf, Ctrl* tab, Ctrl* page) {
 }
 
 // Sekme şeridi hit-test: yüzey koordinatında nokta bir sekme başlığındaysa index
+// FAZ 2.6.2: flags=0 → başlığın TAM dikdörtgeni (dolgu boşlukları dahil) isabetli;
+// TCHT_ONITEM yalnız simge/metin üstünü yakaladığı için başlık kenarları ıskalanıyordu
 int TabStripHitIndex(HWND surf, Ctrl* tab, int sx, int sy) {
     if (!tab || !tab->hwnd || !IsWindow(tab->hwnd)) return -1;
     POINT pt = { sx, sy };
     MapWindowPoints(surf, tab->hwnd, &pt, 1);
     TCHITTESTINFO hti = { 0 };
     hti.pt = pt;
-    hti.flags = TCHT_ONITEM;
+    hti.flags = 0;   // tüm başlık dikdörtgeni
     return (int)SendMessageW(tab->hwnd, TCM_HITTEST, 0, (LPARAM)&hti);
 }
 

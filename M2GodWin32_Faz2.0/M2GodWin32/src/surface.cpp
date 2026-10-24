@@ -397,7 +397,15 @@ static void DrawSelection(HWND dcH, HDC dc) {
         }
         ReleaseDC(surf, tdc);
     } else {
-        RECT cs = CtrlRectOnSurface(sel, surf);
+        // FAZ 2.6.2: TabPage seçimi ana pencere (TabControl) çerçevesinde
+        // gösterilir — sayfa zaten görüntü alanını doldurur, VS davranışı
+        // budur (seçim geri bildirimi TabControl çevresinde belirir).
+        // Sayfa HWND'si kendi alanını kapattığı için sayfa dikdörtgenine
+        // çizilen kesikli çizgi görünmüyordu.
+        Ctrl* drawC = sel;
+        if (_wcsicmp(sel->type.c_str(), L"TabPage") == 0 && sel->parent)
+            drawC = sel->parent;
+        RECT cs = CtrlRectOnSurface(drawC, surf);
         r = { cs.left - SEL_MARGIN, cs.top - SEL_MARGIN, cs.right + SEL_MARGIN, cs.bottom + SEL_MARGIN };
     }
     HPEN pen = CreatePen(PS_DOT, 1, RGB(0, 120, 215));
@@ -406,7 +414,8 @@ static void DrawSelection(HWND dcH, HDC dc) {
     Rectangle(dc, r.left, r.top, r.right, r.bottom);
     SelectObject(dc, ob); SelectObject(dc, op); DeleteObject(pen);
     // FAZ 2.6: TabPage seçiminde boyutlandırma tutamaçları YOK (boyut sekme
-    // görüntü alanına bağlıdır — VS davranışı)
+    // görüntü alanına bağlıdır — VS davranışı). Sayfa gövdesi tıklanınca
+    // seçim zaten TabControl'e yönlenir; tutamaçlar yalnız TabControl'de olur.
     bool noHandles = sel->nonVisual || _wcsicmp(sel->type.c_str(), L"TabPage") == 0;
     if (!noHandles) {
         for (int i = 0; i < 8; i++) {
@@ -460,6 +469,11 @@ static void Paint(HWND surf) {
 static int HitHandle(HWND surf, int sx, int sy) {
     Ctrl* sel = g_model.selected;
     if (!sel || sel->nonVisual) return -1;
+    // FAZ 2.6.2: TabPage'in tutamaçları YOK — sayfa boyutu sekme görüntü
+    // alanına bağlıdır; seçim çerçevesi TabControl çevresinde çizilir ama
+    // tutamaç isabeti sayfa seçiminde devre dışıdır (yanlış boyutlandırma
+    // engellenir). Boyutlandırma için gövdeye tıkla → TabControl seçilir.
+    if (_wcsicmp(sel->type.c_str(), L"TabPage") == 0) return -1;
     RECT cs = CtrlRectOnSurface(sel, surf);
     RECT r = { cs.left - SEL_MARGIN, cs.top - SEL_MARGIN, cs.right + SEL_MARGIN, cs.bottom + SEL_MARGIN };
     for (int i = 0; i < 8; i++) {
@@ -872,6 +886,27 @@ LRESULT CALLBACK SurfaceProc(HWND surf, UINT msg, WPARAM wp, LPARAM lp) {
                     return 0;
                 }
             }
+        }
+        // FAZ 2.6.2: SAYFA GÖVDESİNE tıklandı/sürüklendi → sayfa kendisi
+        // taşINAMAZ ve boyutlandırILAMAZ (VS davranışı + kullanıcı isteği:
+        // "tabpagenin iç alanı sürüklenemez olmalı"). Seçim ve sürükleme
+        // TÜM TabControl'e gider; böylece tutamaçlar (boyutlandırma) da
+        // anında görünür. Sayfa içindeki kontroller (buton vb.) yine
+        // kendileri seçilir/sürüklenir — yalnız boş sayfa zemini bu yola girer.
+        if (hitPre && hitPre->parent &&
+            _wcsicmp(hitPre->type.c_str(), L"TabPage") == 0 &&
+            _wcsicmp(hitPre->parent->type.c_str(), L"TabControl") == 0) {
+            Ctrl* tab = hitPre->parent;
+            if (g_model.selected != tab) {
+                g_model.selected = tab; g_model.formSelected = false;
+                NotifySelChanged(); RepaintAll(surf);
+            }
+            g_model.PushUndo();
+            s_drag = tab; s_dragMode = 1; s_start = pt; s_started = false;
+            s_startRect = { tab->x, tab->y, tab->x + tab->w, tab->y + tab->h };
+            SetCapture(surf);
+            Status(tab->name + L" seçildi (sayfa gövdesi → tamamı)");
+            return 0;
         }
         // 3) kontrol seç + taşı (parent-child duyarlı: üstteki kontrol kazanır)
         Ctrl* c = hitPre;
