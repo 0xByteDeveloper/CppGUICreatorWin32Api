@@ -1,0 +1,21 @@
+=== Üretilen Form1.cpp — Koleksiyon emisyonları (tasarımcıda girilen verilerden, "Kod Üret") ===
+=== Doğrulama: grep çıktısı — C:\m2god_sync\Form1.cpp (Faz 2.6.3, saat 13:09 üretimi) ===
+
+    listBox1->Items->Add(L"Elma");
+    listBox1->Items->Add(L"Armut");
+    listBox1->Items->Add(L"Kiraz");
+    listBox1->Items->Add(L"Muz");
+
+    listView1->Columns->Add(L"Ad", 140);
+    listView1->Columns->Add(L"Sehir", 100);
+
+    listView1->Items->Add(L"Ahmet", L"Ankara");
+    listView1->Items->Add(L"Ayse", L"Izmir");
+
+    treeView1->Nodes->Add(L"Kok1");
+    treeView1->Nodes->AddChild(0, L"Cocuk1A");
+    treeView1->Nodes->AddChild(0, L"Cocuk1B");
+    treeView1->Nodes->Add(L"Kok2");
+
+=== Derleme: x86_64-w64-mingw32-g++ -std=c++14 -municode → 0 hata (C++17 ile de 0 hata) ===
+=== Çalıştırma (wine): sütun sırası Ad|Sehir doğru, alt hücreler Ahmet→Ankara / Ayse→Izmir ===

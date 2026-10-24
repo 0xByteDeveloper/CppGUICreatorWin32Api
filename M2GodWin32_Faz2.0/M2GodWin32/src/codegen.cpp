@@ -72,11 +72,11 @@ static std::wstring M2ComponentTypeOf(const std::wstring& type) {
     return L"";
 }
 
-const char* GlobalVersionMark() { return "M2GOD-GLOBAL v2600"; }
+const char* GlobalVersionMark() { return "M2GOD-GLOBAL v2601"; }
 
 // ============================================================================
 //  Global.h şablonu — M2God TAM KAPSAMLI SDK (Faz 2.6)
-//  Şablon ayrı dosyada: src/global_template.inc (M2GOD-GLOBAL v2600, C++14 uyumlu)
+//  Şablon ayrı dosyada: src/global_template.inc (M2GOD-GLOBAL v2601, C++14 uyumlu)
 //  Config_info.json'daki tüm kontroller/bileşenler/diyaloglar + enumlar + Color
 // ============================================================================
 std::wstring GenerateGlobalH() {
@@ -250,13 +250,93 @@ static std::wstring EmitCreateCall(const Ctrl* c) {
     }
     o << L"    " << c->name << L" = new M2God::" << M2TypeOf(c->type) << L"(" << ctorArgs << L");\n";
     // --- özellik emisyonu ---
+    // Items (ListBox/CheckedListBox/ComboBox): her satır bir öğe
+    // (ListView kendi bloğunda '|' ile hücre ayrımıyla üretilir)
     auto itItems = c->props.find(L"Items");
-    if (itItems != c->props.end() && !itItems->second.empty()) {
+    if (c->type != L"ListView" && itItems != c->props.end() && !itItems->second.empty()) {
         o << L"    " << c->name << L"->Items->Clear();\n";
         for (auto& line : Split(itItems->second, L'\n')) {
             std::wstring t = Trim(line);
             if (!t.empty())
                 o << L"    " << c->name << L"->Items->Add(L\"" << EscCppStr(t) << L"\");\n";
+        }
+    }
+    // FAZ 2.6.3: ListView Sütunlar (tasarımcı "Columns": her satır "Başlık, Genişlik")
+    if (c->type == L"ListView") {
+        auto itCols = c->props.find(L"Columns");
+        if (itCols != c->props.end() && !itCols->second.empty()) {
+            o << L"    " << c->name << L"->Columns->Clear();\n";
+            for (auto& line : Split(itCols->second, L'\n')) {
+                std::wstring t = Trim(line);
+                if (t.empty()) continue;
+                auto parts = Split(t, L',');
+                std::wstring title = Trim(parts[0]);
+                int width = 120;
+                if (parts.size() >= 2) width = _wtoi(Trim(parts[1]).c_str());
+                if (width <= 0) width = 120;
+                o << L"    " << c->name << L"->Columns->Add(L\"" << EscCppStr(title) << L"\", "
+                  << width << L");\n";
+            }
+        }
+        // ListView Items: her satır bir liste satırı; hücreler '|' ile ayrılır
+        auto itLI = c->props.find(L"Items");
+        if (itLI != c->props.end() && !itLI->second.empty()) {
+            o << L"    " << c->name << L"->Items->Clear();\n";
+            int rowIdx = 0;
+            for (auto& line : Split(itLI->second, L'\n')) {
+                std::wstring t = Trim(line);
+                if (t.empty()) continue;
+                auto cells = Split(t, L'|');
+                for (auto& cc : cells) cc = Trim(cc);
+                if (cells.size() == 1)
+                    o << L"    " << c->name << L"->Items->Add(L\"" << EscCppStr(cells[0]) << L"\");\n";
+                else if (cells.size() == 2)
+                    o << L"    " << c->name << L"->Items->Add(L\"" << EscCppStr(cells[0]) << L"\", L\""
+                      << EscCppStr(cells[1]) << L"\");\n";
+                else if (cells.size() == 3)
+                    o << L"    " << c->name << L"->Items->Add(L\"" << EscCppStr(cells[0]) << L"\", L\""
+                      << EscCppStr(cells[1]) << L"\", L\"" << EscCppStr(cells[2]) << L"\");\n";
+                else {
+                    o << L"    " << c->name << L"->Items->Add(L\"" << EscCppStr(cells[0]) << L"\");\n";
+                    for (int k = 1; k < (int)cells.size() && k <= 4; k++)
+                        o << L"    " << c->name << L"->Items->SetSub(" << rowIdx << L", " << k
+                          << L", L\"" << EscCppStr(cells[k]) << L"\");\n";
+                }
+                rowIdx++;
+            }
+        }
+    }
+    // FAZ 2.6.3: TreeView Düğümler (tasarımcı "Nodes": girinti = alt seviye)
+    if (c->type == L"TreeView") {
+        auto itN = c->props.find(L"Nodes");
+        if (itN != c->props.end() && !itN->second.empty()) {
+            o << L"    " << c->name << L"->Nodes->Clear();\n";
+            int flat = 0;
+            int lastAtLevel[16];
+            for (int k = 0; k < 16; k++) lastAtLevel[k] = -1;
+            for (auto& line : Split(itN->second, L'\n')) {
+                std::wstring t = line;
+                if (!t.empty() && t.back() == L'\r') t.pop_back();
+                int level = 0; size_t pos = 0;
+                while (pos < t.size()) {
+                    if (t[pos] == L'\t') { level++; pos++; }
+                    else if (t[pos] == L' ') {
+                        int sp = 0;
+                        while (pos < t.size() && t[pos] == L' ') { sp++; pos++; }
+                        level += sp / 4;
+                    } else break;
+                }
+                std::wstring text = Trim(t.substr(pos));
+                if (text.empty()) continue;
+                if (level >= 16) level = 15;
+                if (level == 0 || lastAtLevel[level - 1] < 0)
+                    o << L"    " << c->name << L"->Nodes->Add(L\"" << EscCppStr(text) << L"\");\n";
+                else
+                    o << L"    " << c->name << L"->Nodes->AddChild(" << lastAtLevel[level - 1]
+                      << L", L\"" << EscCppStr(text) << L"\");\n";
+                lastAtLevel[level] = flat; flat++;
+                for (int k = level + 1; k < 16; k++) lastAtLevel[k] = -1;
+            }
         }
     }
     {

@@ -140,6 +140,14 @@ static void BeginEdit(HWND panel, int row) {
             OpenTabPagesEditor(g_model.selected);
         return;
     }
+    // FAZ 2.6.3: Items/Columns/Nodes koleksiyon satırları → Koleksiyon Düzenleyici
+    // (VS "String Collection Editor" karşılığı)
+    if (_wcsicmp(r.name.c_str(), L"Items") == 0 ||
+        _wcsicmp(r.name.c_str(), L"Columns") == 0 ||
+        _wcsicmp(r.name.c_str(), L"Nodes") == 0) {
+        if (g_model.selected) OpenCollectionEditor(g_model.selected, r.name);
+        return;
+    }
     RECT rc;
     if (!ListView_GetSubItemRect(s_list, row, 1, LVIR_BOUNDS, &rc)) return;
     // GetSubItemRect liste-client koordinatı verir; edit panel'in çocuğu → panele çevir
@@ -298,6 +306,12 @@ static void EndEdit(HWND panel, bool commit) {
 }
 
 // --- doldurma -------------------------------------------------------------------
+// FAZ 2.6.3: koleksiyon değeri satır sayısı ('\n' ile ayrılmış, boş satırlar sayılmaz)
+static int CountCollectionLines(const std::wstring& v) {
+    int n = 0;
+    for (auto& ln : Split(v, L'\n')) if (!Trim(ln).empty()) n++;
+    return n;
+}
 static void AddPropRow(const ElementDef* def, const wchar_t* name, const std::wstring& curVal, bool readOnly) {
     Row r;
     r.name = name;
@@ -362,6 +376,44 @@ static void FillRows() {
                 tp.type = L"System.Windows.Forms.TabControl.TabPageCollection";
                 tp.category = L"Data";
                 s_rows.push_back(tp);
+            }
+            // FAZ 2.6.3: Items/Columns/Nodes koleksiyon satırları (VS "..." düğmesi)
+            // Config_info'da bu koleksiyonlar browsable=true, can_set=false — genel
+            // döngüye girmedikleri için panelde YOKTULAR ("ListBox'ta items yok"
+            // hatasının kökü). VS'de bunlar Koleksiyon Düzenleyicisi ile düzenlenir.
+            if (_wcsicmp(c->type.c_str(), L"ListBox") == 0 ||
+                _wcsicmp(c->type.c_str(), L"CheckedListBox") == 0 ||
+                _wcsicmp(c->type.c_str(), L"ComboBox") == 0) {
+                Row r;
+                r.name = L"Items";
+                r.type = L"System.Windows.Forms." + c->type + L"+ObjectCollection";
+                int n = CountCollectionLines(c->Get(L"Items"));
+                wchar_t nb[32]; swprintf(nb, 32, L"<%d öğe>", n);
+                r.value = nb; r.category = L"Data";
+                s_rows.push_back(r);
+            } else if (_wcsicmp(c->type.c_str(), L"ListView") == 0) {
+                Row rc;
+                rc.name = L"Columns";
+                rc.type = L"System.Windows.Forms.ListView+ColumnHeaderCollection";
+                int nc = CountCollectionLines(c->Get(L"Columns"));
+                wchar_t cb[32]; swprintf(cb, 32, L"<%d sütun>", nc);
+                rc.value = cb; rc.category = L"Data";
+                s_rows.push_back(rc);
+                Row ri;
+                ri.name = L"Items";
+                ri.type = L"System.Windows.Forms.ListView+ListViewItemCollection";
+                int ni = CountCollectionLines(c->Get(L"Items"));
+                wchar_t ib[32]; swprintf(ib, 32, L"<%d satır>", ni);
+                ri.value = ib; ri.category = L"Data";
+                s_rows.push_back(ri);
+            } else if (_wcsicmp(c->type.c_str(), L"TreeView") == 0) {
+                Row rn;
+                rn.name = L"Nodes";
+                rn.type = L"System.Windows.Forms.TreeNodeCollection";
+                int nn = CountCollectionLines(c->Get(L"Nodes"));
+                wchar_t nb2[32]; swprintf(nb2, 32, L"<%d düğüm>", nn);
+                rn.value = nb2; rn.category = L"Data";
+                s_rows.push_back(rn);
             }
             // katalogun kalan browsable+canSet özellikleri
             if (def) {
@@ -936,6 +988,9 @@ void OpenTabPagesEditor(Ctrl* tab) {
     s_dlg = nullptr;
     EnableWindow(g_hMain, TRUE);
     SetForegroundWindow(g_hMain);
+    // FAZ 2.6.3: diyaloğın kapladığı alan bayat kalmasın (siyah delik sorunu)
+    RedrawWindow(g_hMain, nullptr, nullptr,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
     if (!s_ok) {
         // iptal: açılış anındaki modele dön
         bool ok = false;
@@ -950,6 +1005,154 @@ void OpenTabPagesEditor(Ctrl* tab) {
     PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0);
     HWND pr = GetDlgItem(g_hMain, 1510);
     if (pr) Refresh(pr);
+}
+
+// ==================== FAZ 2.6.3: Koleksiyon Düzenleyicisi ====================
+// VS "String Collection Editor" karşılığı: çok satırlı metin alanı, her satır
+// bir öğe. Biçimler:
+//   Items   (ListBox/CheckedListBox/ComboBox) : her satır bir öğe
+//   Items   (ListView)                        : hücreler '|' ile ayrılır (Adı|Soyadı)
+//   Columns (ListView)                        : her satır "Başlık, Genişlik"
+//   Nodes   (TreeView)                        : girinti (Tab / 4 boşluk) = alt düğüm
+namespace coled {
+
+static bool s_done = false, s_ok = false;
+static HWND s_dlg = nullptr, s_ed = nullptr;
+
+static LRESULT CALLBACK ColEdProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    switch (m) {
+    case WM_COMMAND: {
+        int id = LOWORD(w);
+        if (id == IDOK)      { s_ok = true;  s_done = true; return 0; }
+        if (id == IDCANCEL)  { s_ok = false; s_done = true; return 0; }
+        break;
+    }
+    case WM_CLOSE:
+        s_ok = false; s_done = true;
+        return 0;
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+
+} // namespace coled
+
+void OpenCollectionEditor(Ctrl* c, const std::wstring& propName) {
+    using namespace coled;
+    if (!c) return;
+    // bu satırlar yalnız desteklenen tiplerde gösterilir; yine de koru
+    if (propName == L"Items" &&
+        _wcsicmp(c->type.c_str(), L"ListBox") != 0 && _wcsicmp(c->type.c_str(), L"CheckedListBox") != 0 &&
+        _wcsicmp(c->type.c_str(), L"ComboBox") != 0 && _wcsicmp(c->type.c_str(), L"ListView") != 0) return;
+    if (propName == L"Columns" && _wcsicmp(c->type.c_str(), L"ListView") != 0) return;
+    if (propName == L"Nodes" && _wcsicmp(c->type.c_str(), L"TreeView") != 0) return;
+
+    std::wstring title, hint;
+    if (propName == L"Items") {
+        if (_wcsicmp(c->type.c_str(), L"ListView") == 0) {
+            title = c->name + L" — Öğeler (Items)";
+            hint = L"Her satır bir liste satırıdır. Sütun hücrelerini '|' ile ayırın:\r\n  Ahmet|Yılmaz|İstanbul";
+        } else {
+            title = c->name + L" — Öğeler (Items)";
+            hint = L"Her satır bir öğe olacak şekilde yazın:";
+        }
+    } else if (propName == L"Columns") {
+        title = c->name + L" — Sütunlar (Columns)";
+        hint = L"Her satır bir sütundur. Biçim: Başlık, Genişlik  (örnek: Ad, 140)";
+    } else {
+        title = c->name + L" — Düğümler (Nodes)";
+        hint = L"Girinti (Tab veya 4 boşluk) düğümü bir alt seviyeye indirir.";
+    }
+
+    // mevcut değeri düzenlenebilir biçime getir (\n → \r\n)
+    std::wstring cur = c->Get(propName.c_str());
+    std::wstring shown;
+    for (wchar_t ch : cur) { if (ch == L'\n') shown += L"\r\n"; else shown += ch; }
+
+    RECT orc; GetWindowRect(g_hMain, &orc);
+    int dw = 560, dh = 440;
+    int dx = orc.left + ((orc.right - orc.left) - dw) / 2;
+    int dy = orc.top + ((orc.bottom - orc.top) - dh) / 2;
+
+    static bool reg = false;
+    if (!reg) {
+        WNDCLASSW wc = { 0 };
+        wc.lpfnWndProc = ColEdProc; wc.hInstance = g_hInst;
+        wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+        wc.lpszClassName = L"M2GOD_COLED";
+        RegisterClassW(&wc);
+        reg = true;
+    }
+    s_done = false; s_ok = false;
+    s_dlg = CreateWindowExW(0, L"M2GOD_COLED", title.c_str(),
+                            WS_POPUP | WS_CAPTION | WS_SYSMENU,
+                            dx, dy, dw, dh, g_hMain, nullptr, g_hInst, nullptr);
+    HWND hHint = CreateWindowExW(0, L"STATIC", hint.c_str(), WS_CHILD | WS_VISIBLE,
+                                 14, 12, dw - 28, 44, s_dlg, nullptr, g_hInst, nullptr);
+    SendMessageW(hHint, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
+    s_ed = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", shown.c_str(),
+                           WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL |
+                           ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_WANTRETURN,
+                           14, 62, dw - 28, dh - 62 - 56, s_dlg, nullptr, g_hInst, nullptr);
+    SendMessageW(s_ed, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
+    HWND hOk = CreateWindowExW(0, L"BUTTON", L"Tamam", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                               dw - 208, dh - 44, 92, 30, s_dlg, (HMENU)IDOK, g_hInst, nullptr);
+    HWND hCancel = CreateWindowExW(0, L"BUTTON", L"İptal", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                                   dw - 106, dh - 44, 92, 30, s_dlg, (HMENU)IDCANCEL, g_hInst, nullptr);
+    SendMessageW(hOk, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
+    SendMessageW(hCancel, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
+
+    EnableWindow(g_hMain, FALSE);
+    ShowWindow(s_dlg, SW_SHOW);
+    SetForegroundWindow(s_dlg);
+    SetFocus(s_ed);
+    // VS davranışı: IsDialogMessage — Tab ile gezinme, Enter=Tamam (çok satırlı
+    // alanda ES_WANTRETURN Enter'ı yeni satır yapar), ESC=İptal
+    std::wstring result;
+    bool hasResult = false;
+    MSG msg;
+    while (!s_done && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if (IsDialogMessageW(s_dlg, &msg)) continue;
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    // değeri EDIT yok edilmeden ÖNCE al
+    if (s_ok && s_ed && IsWindow(s_ed)) {
+        std::vector<wchar_t> buf(65536);
+        GetWindowTextW(s_ed, buf.data(), (int)buf.size());
+        result = buf.data();
+        hasResult = true;
+    }
+    if (IsWindow(s_dlg)) DestroyWindow(s_dlg);
+    s_dlg = nullptr; s_ed = nullptr;
+    EnableWindow(g_hMain, TRUE);
+    SetForegroundWindow(g_hMain);
+    // FAZ 2.6.3: diyaloğın kapladığı alan ANA pencerede bayat/siyah kalıyordu
+    // (wine/Xvfb'de belirgin) — tam senkron repaint
+    RedrawWindow(g_hMain, nullptr, nullptr,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+
+    if (s_ok && hasResult) {
+        // \r\n → \n normalizasyonu; boş satırlar atılır (VS davranışı)
+        // NOT: Nodes satırlarının BAŞINDAKİ girinti anlamlıdır — soldan trim edilmez
+        bool isNodes = (propName == L"Nodes");
+        std::wstring val;
+        std::wstring norm;
+        for (wchar_t ch : result) { if (ch != L'\r') norm += ch; }
+        for (auto& line : Split(norm, L'\n')) {
+            std::wstring t = isNodes ? line : Trim(line);
+            while (!t.empty() && (t.back() == L' ' || t.back() == L'\t')) t.pop_back();
+            if (t.empty()) continue;
+            if (!val.empty()) val += L"\n";
+            val += t;
+        }
+        g_model.PushUndo();
+        c->props[propName] = val;
+        factory::ApplyProp(c, propName, val);
+        InvalidateRect(GetDlgItem(g_hMain, IDC_SURFACE), nullptr, FALSE);
+        PostMessageW(g_hMain, MWM_MODEL_CHANGED, 0, 0);
+    }
+    // panel satırlarını tazele ("<N öğe>" değeri güncellenir)
+    FillRows(); SyncList();
 }
 
 } // namespace props

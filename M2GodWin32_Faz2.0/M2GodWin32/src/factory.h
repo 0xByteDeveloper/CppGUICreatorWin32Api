@@ -31,4 +31,14 @@ int  TabStripHitIndex(HWND surf, Ctrl* tab, int sx, int sy);
 // Sekme başlığının (şerit) yüzey koordinatlarındaki rect'i (akıllı ok konumu için)
 bool TabStripRect(HWND surf, Ctrl* tab, RECT& out);
 
+// FAZ 2.6.3: koleksiyon tasarım önizlemesi (Items/Columns/Nodes)
+// Items (ListBox/CheckedListBox/ComboBox): her satır bir öğe
+void FillListItems(HWND h, const std::wstring& items);
+// Columns (ListView): her satır "Başlık, Genişlik"
+void FillListColumns(HWND h, const std::wstring& cols);
+// Items (ListView): her satır bir satır; hücreler '|' ile ayrılır
+void FillListRows(HWND h, const std::wstring& items);
+// Nodes (TreeView): girinti (Tab / 4 boşluk) = alt seviye
+void FillTreeNodes(HWND h, const std::wstring& nodes);
+
 } // namespace factory

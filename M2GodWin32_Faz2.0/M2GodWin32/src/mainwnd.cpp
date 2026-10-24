@@ -499,7 +499,7 @@ static int ShowWelcomeDialog(std::wstring& openPath) {
     EnsureDialogClass();
     int result = 0;
     HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"M2GOD_CODEDLG",
-        L"M2GodWin32 Faz 2.6.2 — Başlangıç", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        L"M2GodWin32 Faz 2.6.3 — Başlangıç", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         360, 200, 640, 420, nullptr, nullptr, g_hInst, nullptr);
     SetWindowLongW(dlg, GWL_STYLE, (GetWindowLongW(dlg, GWL_STYLE) & ~WS_MAXIMIZEBOX) | WS_CAPTION);
     HWND hint = CreateWindowExW(0, L"STATIC",
@@ -983,7 +983,7 @@ static LRESULT CALLBACK FrameProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             return 0;
         case CMD_ABOUT:
             MessageBoxW(h,
-                L"M2GodWin32 — Faz 2.6.2 God Mode MVP\n\n"
+                L"M2GodWin32 — Faz 2.6.3 God Mode MVP\n\n"
                 L"Win32 API Görsel Form Tasarımcısı\n"
                 L"• Config_info.json kataloğu ile tüm .NET elemanları\n"
                 L"• Sürükle-bırak VE tıkla-yerleştir (ESC = iptal)\n"
@@ -1008,6 +1008,15 @@ L"  pictureBox1->Image = M2God::Image::FromFile(L\"resim.png\");  // PNG/JPG/GIF
                 L"• Olay yönlendirme: WM_NOTIFY/WM_HSCROLL + DoubleClick/TextChanged/\n"
                 L"  ItemCheck/AfterSelect/Scroll/ValueChanged + form Mouse/Key olayları\n"
                 L"•MenuStrip/ContextMenuStrip gerçek HMENU + ItemClick\n\n"
+                L"Faz 2.6.3 yenilikleri (Koleksiyon Düzenleyiciler + sekme vurgusu):\n"
+                L"• Özellikler panelinde Items/Columns/Nodes satırları (VS \"...\" düğmesi):\n"
+                L"  ListBox/CheckedListBox/ComboBox → Items düzenleyici\n"
+                L"  ListView → Sütunlar (Ad, 140) + Öğeler (Adı|Soyadı|...) düzenleyici\n"
+                L"  TreeView → Nodes düzenleyici (girinti = alt düğüm)\n"
+                L"• Düzenleyicide yazdıklarınız TASARIM YÜZEYİNDE CANLI GÖRÜNÜR\n"
+                L"• Üretilen koda taşınır: Items->Add, Columns->Add, Nodes->Add/AddChild\n"
+                L"• Sekme vurgusu düzeltildi: seçili sayfa başlığı artık SEÇİLİ görünür\n"
+                L"\n"
                 L"Faz 2.6.2 yenilikleri (TabControl tasarım etkileşimi düzeltmeleri):\n"
                 L"• Sekme başlığına tıkla → sayfa ANINDA görsel olarak değişir\n"
                 L"  (bayat piksel sorunu kökten giderildi: senkron tam yeniden boyama)\n"
@@ -1148,7 +1157,7 @@ int Run(HINSTANCE hInst, LPWSTR cmdLine) {
     wc.lpszClassName = L"M2GOD_MAIN";
     wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(1));
     RegisterClassW(&wc);
-    HWND h = CreateWindowExW(0, L"M2GOD_MAIN", L"M2GodWin32 Faz 2.6.1 — God Mode MVP",
+    HWND h = CreateWindowExW(0, L"M2GOD_MAIN", L"M2GodWin32 Faz 2.6.3 — God Mode MVP",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         8, 8, 1424, 856, nullptr, nullptr, hInst, nullptr);
     g_hMain = h;

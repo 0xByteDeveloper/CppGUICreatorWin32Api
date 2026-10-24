@@ -1,0 +1,15 @@
+=== HARNESS (10/10) ===
+ctrls=3
+SyncIntoFile -> 1, handlerLine=47
+[OK  ] M2God::Button* button1 = nullptr;
+[OK  ] button1 = new M2God::Button(hWnd, IDC_BUTTON1
+[OK  ] case M2GodForm::IDC_BUTTON1:
+[OK  ] BN_CLICKED && M2GodForm::button1) M2GodForm::button1_Click(hWnd);
+[OK  ] M2God::InitDone() = true;
+[OK  ] MessageBoxA(0, "Mause", "Test", 0);
+[OK  ] SetWindowSubclass(groupBox1->Handle, ContainerBridgeProc, 1, 0);
+[OK  ] groupBox1->Handle, IDC_RADIOBUTTON1
+[OK  ] extern M2God::Button* button1;
+[OK  ] void button1_Click(HWND hWnd);
+
+=== TUM DOGRULAMALAR GECTI ===

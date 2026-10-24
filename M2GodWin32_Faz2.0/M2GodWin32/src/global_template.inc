@@ -1,6 +1,6 @@
 R"M2GODGLOBAL(// ============================================================================
 //  Global.h — M2GodWin32 UI Designer (Faz 2.6) TAM KAPSAMLI nesne kutuphanesi
-//  M2GOD-GLOBAL v2600
+//  M2GOD-GLOBAL v2601
 //  !! BU DOSYAYI DUZENLEMEYIN — tasarimci gerektiginde gunceller.
 //  Amac: Form1 olay kodlarinda WinForms benzeri sozdizimi (saf Win32 uzerinde):
 //      timer1->Enabled = false;                  // Timer durdurur
@@ -1655,14 +1655,29 @@ public:
     public:
         explicit ColumnsProp(ListView* o) : c(o) {}
         ColumnsProp* operator->() { return this; }
-        void Clear() { if (c->Handle) { while ((int)SendMessageW(c->Handle, LVM_DELETECOLUMN, 0, 0) != -1) {} } }
+        // FAZ 2.6.3 DÜZELTME: eski `while (LVM_DELETECOLUMN != -1)` döngüsü
+        // sonsuza döner (LVM_DELETECOLUMN başarısızlıkta -1 değil 0 döner).
+        // Güvenli yol: sütun sayısını header'dan oku, tersten sil.
+        void Clear() {
+            if (!c->Handle) return;
+            HWND hdr = (HWND)SendMessageW(c->Handle, LVM_GETHEADER, 0, 0);
+            int n = hdr ? (int)SendMessageW(hdr, HDM_GETITEMCOUNT, 0, 0) : 0;
+            while (n > 0) {
+                SendMessageW(c->Handle, LVM_DELETECOLUMN, (WPARAM)(n - 1), 0);
+                hdr = (HWND)SendMessageW(c->Handle, LVM_GETHEADER, 0, 0);
+                n = hdr ? (int)SendMessageW(hdr, HDM_GETITEMCOUNT, 0, 0) : 0;
+            }
+        }
+        // FAZ 2.6.3 DÜZELTME: sütun indeksi LVM_GETITEMCOUNT (SATIR sayısı)
+        // ile alınıyordu → sütunlar ters sıraya ekleniyordu. Doğrusu header sayısı.
         void Add(const std::wstring& title, int width = 120) {
             if (!c->Handle) return;
             LVCOLUMNW lc = { 0 };
             lc.mask = LVCF_TEXT | LVCF_WIDTH;
             lc.pszText = (LPWSTR)title.c_str();
             lc.cx = width;
-            int n = (int)SendMessageW(c->Handle, LVM_GETITEMCOUNT, 0, 0);
+            HWND hdr = (HWND)SendMessageW(c->Handle, LVM_GETHEADER, 0, 0);
+            int n = hdr ? (int)SendMessageW(hdr, HDM_GETITEMCOUNT, 0, 0) : 0;
             SendMessageW(c->Handle, LVM_INSERTCOLUMNW, (WPARAM)n, (LPARAM)&lc);
         }
         void RemoveAt(int i) { if (c->Handle) SendMessageW(c->Handle, LVM_DELETECOLUMN, (WPARAM)i, 0); }

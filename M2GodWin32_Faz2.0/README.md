@@ -1,10 +1,56 @@
-# M2GodWin32 — Faz 2.6.2 God Mode MVP
+# M2GodWin32 — Faz 2.6.3 God Mode MVP
 
 **Visual Studio 2019 C++ CLR Form Designer deneyimini Win32 API ile yaşatan, tam kapsamlı görsel UI tasarım ortamı.**
 
-> Bu proje `CppGUICreatorWin32Api` deposunun **Faz 2.6.2** geliştirme aşamasıdır.
+> Bu proje `CppGUICreatorWin32Api` deposunun **Faz 2.6.3** geliştirme aşamasıdır.
 > Katalog kaynağı olarak depodaki **Config_info.json** (.NET Framework WinForms tam eleman kataloğu: 144 eleman, tüm property'ler + event'ler + 203 enum) kullanılır.
 
+
+---
+
+## Faz 2.6.3 — Koleksiyon Düzenleyiciler (Items/Columns/Nodes) + sekme vurgusu (kullanıcı bildirdi)
+
+Kullanıcı raporu: *"çalışıyor ama seçili olan tabpage1'miş gibi oluyor UI editörde, hangisi seçiliyse o
+seçiliymiş gibi gözüksün; ListBox'ın içine eleman ekleyeceğim, özellikler sekmesinde Items yok;
+bide başka çok eksiğin var, tamamlasana .NET SDK'dan ve Config_info'dan."*
+
+1. **Items/Columns/Nodes koleksiyon satırları özellik panelinde ARTIK VAR (VS "..." düğmesi).**
+   Config_info.json'da bu koleksiyonlar `browsable=true, can_set=false` olduğu için genel
+   satır döngüsüne girmiyor ve panelde HİÇ görünmüyordu ("ListBox'ta items yok" hatasının
+   kökü). Artık: ListBox/CheckedListBox/ComboBox → **Items**, ListView → **Columns + Items**,
+   TreeView → **Nodes** satırları gösterilir (değer: `<N öğe/sütun/satır/düğüm>`).
+
+2. **Koleksiyon Düzenleyicisi (VS String Collection Editor karşılığı)** — satıra tıkla →
+   modal diyalog: her satır bir öğe. Biçimler: Items = düz satırlar; ListView Items =
+   hücreler `|` ile (Adı|Soyadı|…); ListView Columns = `Başlık, Genişlik` (örn. `Ad, 140`);
+   TreeView Nodes = girinti (Tab / 4 boşluk) alt düğüm yapar. Tamam → model + CANLI
+   tasarım önizleme güncellenir; İptal/ESC vazgeçer.
+
+3. **Tasarım önizlemesi koleksiyonları canlı gösterir** — `FillListItems/FillListColumns/
+   FillListRows/FillTreeNodes`; Items özelliği VARSA örnek içerik ("Öğe 1..4") YERİNE
+   gerçek veriler çizilir.
+
+4. **Üretilen koda taşınır (VS birebir):** `listBox1->Items->Add(L"Elma");`,
+   `listView1->Columns->Add(L"Ad", 140);`, `listView1->Items->Add(L"Ahmet", L"Ankara");`
+   (1-3 hücre overload + fazlası SetSub), `treeView1->Nodes->Add(L"Kök")` /
+   `->AddChild(0, L"Çocuk")` (girinti → düz indeksli parent). Kanıt: üretilen proje
+   C++14 VE C++17 -static 0 hata → wine'da çalıştı: ListBox öğeleri, ListView sütunları
+   + alt hücreler, TreeView hiyerarşisi, TabControl seçili sayfası ekranda.
+
+5. **Sekme vurgusu düzeltildi ("hangisi seçiliyse o seçili görünsün").** `UpdateTabPages`
+   `TCM_SETCURSEL`'i yalnız başlıklar yeniden kurulduğunda gönderiyordu; sayfa değişince
+   içerik değişip başlık vurgusu tabPage1'de kalıyordu. Artık SEÇİM DEĞİŞİMİNDE DE
+   gönderilir — seçili başlık seçili görünür.
+
+6. **KRİTİK runtime düzeltmeleri (Global.h v2601):**
+   - `ListView::ColumnsProp::Clear()` içindeki `while (LVM_DELETECOLUMN != -1)` döngüsü
+     SONSUZ DÖNGÜYDÜ (LVM_DELETECOLUMN başarısızlıkta -1 değil 0 döner) → Columns->Clear()
+     uygulamanı DONdururdu. Header_GetItemCount ile güvenli silme.
+   - `ColumnsProp::Add()` sütun indeksini LVM_GETITEMCOUNT (SATIR sayısı!) ile alıyordu →
+     sütunlar TERS sıraya ekleniyordu. Doğrusu header sayısı.
+   - Kullanıcılar MayFarm'da F7 Senkron → Global.h otomatik v2601'e yükselir.
+
+7. **Diyalog kapanınca ana pencere tam repaint** (wine/Xvfb'de siyah kalıntı giderildi).
 
 ---
 

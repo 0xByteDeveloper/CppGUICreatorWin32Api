@@ -167,6 +167,115 @@ static void ApplyFontIfNeeded(Ctrl* c) {
     (void)hPrev;
 }
 
+// ==================== FAZ 2.6.3: koleksiyon tasarım önizlemesi ====================
+// Items (ListBox/CheckedListBox/ComboBox): her satır bir öğe
+void FillListItems(HWND h, const std::wstring& items) {
+    if (!h || !IsWindow(h)) return;
+    wchar_t cls[64]; GetClassNameW(h, cls, 64);
+    bool combo = _wcsicmp(cls, L"COMBOBOX") == 0;
+    SendMessageW(h, combo ? CB_RESETCONTENT : LB_RESETCONTENT, 0, 0);
+    for (auto& line : Split(items, L'\n')) {
+        std::wstring t = Trim(line);
+        if (!t.empty()) SendMessageW(h, combo ? CB_ADDSTRING : LB_ADDSTRING, 0, (LPARAM)t.c_str());
+    }
+}
+
+// Columns (ListView): her satır "Başlık, Genişlik"
+void FillListColumns(HWND h, const std::wstring& cols) {
+    if (!h || !IsWindow(h)) return;
+    // FAZ 2.6.3 KRİTİK DÜZELTME: eski döngü `while (LVM_DELETECOLUMN != -1)`
+    // idi — LVM_DELETECOLUMN başarısızlıkta -1 DEĞİL 0 döndürür → SONSUZ
+    // DÖNGÜ → UI thread kilitleniyordu (kolon uygulaması donduruyordu).
+    // Güvenli yol: sütun sayısını Header_GetItemCount ile al, tersten sil.
+    int nc = 0;
+    {
+        HWND hdr = (HWND)SendMessageW(h, LVM_GETHEADER, 0, 0);
+        nc = hdr ? (int)SendMessageW(hdr, HDM_GETITEMCOUNT, 0, 0) : 0;
+    }
+    while (nc > 0) {
+        SendMessageW(h, LVM_DELETECOLUMN, (WPARAM)(nc - 1), 0);
+        HWND hdr = (HWND)SendMessageW(h, LVM_GETHEADER, 0, 0);
+        nc = hdr ? (int)SendMessageW(hdr, HDM_GETITEMCOUNT, 0, 0) : 0;
+    }
+    SendMessageW(h, LVM_DELETEALLITEMS, 0, 0);   // sütunsuz satırlar anlamsız
+    int k = 0;
+    for (auto& line : Split(cols, L'\n')) {
+        std::wstring t = Trim(line);
+        if (t.empty()) continue;
+        auto parts = Split(t, L',');
+        std::wstring title = Trim(parts[0]);
+        int width = 120;
+        if (parts.size() >= 2) width = _wtoi(Trim(parts[1]).c_str());
+        if (width <= 0) width = 120;
+        LVCOLUMNW lc = { 0 };
+        lc.mask = LVCF_TEXT | LVCF_WIDTH;
+        lc.pszText = (LPWSTR)title.c_str();
+        lc.cx = width;
+        SendMessageW(h, LVM_INSERTCOLUMNW, (WPARAM)k++, (LPARAM)&lc);
+    }
+}
+
+// Items (ListView): her satır bir satır; hücreler '|' ile ayrılır (a|b|c)
+void FillListRows(HWND h, const std::wstring& items) {
+    if (!h || !IsWindow(h)) return;
+    SendMessageW(h, LVM_DELETEALLITEMS, 0, 0);
+    int i = 0;
+    for (auto& line : Split(items, L'\n')) {
+        std::wstring t = Trim(line);
+        if (t.empty()) continue;
+        auto cells = Split(t, L'|');
+        std::wstring c0 = Trim(cells[0]);
+        LVITEMW li = { 0 };
+        li.mask = LVIF_TEXT;
+        li.iItem = i;
+        li.pszText = (LPWSTR)c0.c_str();
+        SendMessageW(h, LVM_INSERTITEMW, 0, (LPARAM)&li);
+        for (int k = 1; k < (int)cells.size(); k++) {
+            std::wstring ck = Trim(cells[k]);
+            LVITEMW ls = { 0 };
+            ls.mask = LVIF_TEXT;
+            ls.iItem = i;
+            ls.iSubItem = k;
+            ls.pszText = (LPWSTR)ck.c_str();
+            SendMessageW(h, LVM_SETITEMTEXTW, (WPARAM)i, (LPARAM)&ls);
+        }
+        i++;
+    }
+}
+
+// Nodes (TreeView): girinti (Tab veya 4 boşluk) = bir alt seviye
+void FillTreeNodes(HWND h, const std::wstring& nodes) {
+    if (!h || !IsWindow(h)) return;
+    TreeView_DeleteAllItems(h);
+    HTREEITEM lastAtLevel[16] = { 0 };
+    for (auto& line : Split(nodes, L'\n')) {
+        std::wstring t = line;
+        if (!t.empty() && t.back() == L'\r') t.pop_back();
+        int level = 0; size_t pos = 0;
+        while (pos < t.size()) {
+            if (t[pos] == L'\t') { level++; pos++; }
+            else if (t[pos] == L' ') {
+                int sp = 0;
+                while (pos < t.size() && t[pos] == L' ') { sp++; pos++; }
+                level += sp / 4;
+            } else break;
+        }
+        std::wstring text = Trim(t.substr(pos));
+        if (text.empty()) continue;
+        if (level >= 16) level = 15;
+        TVINSERTSTRUCTW tv = { 0 };
+        tv.hInsertAfter = TVI_LAST;
+        tv.item.mask = TVIF_TEXT;
+        tv.item.pszText = (LPWSTR)text.c_str();
+        tv.hParent = (level == 0 || !lastAtLevel[level - 1]) ? TVI_ROOT : lastAtLevel[level - 1];
+        HTREEITEM it = (HTREEITEM)SendMessageW(h, TVM_INSERTITEMW, 0, (LPARAM)&tv);
+        if (it) {
+            lastAtLevel[level] = it;
+            for (int k = level + 1; k < 16; k++) lastAtLevel[k] = nullptr;
+        }
+    }
+}
+
 void ApplyProp(Ctrl* c, const std::wstring& prop, const std::wstring& value) {
     if (!c || !c->hwnd) return;
     HWND h = c->hwnd;
@@ -202,6 +311,14 @@ void ApplyProp(Ctrl* c, const std::wstring& prop, const std::wstring& value) {
         InvalidateRect(h, nullptr, TRUE);
     } else if (prop == L"MultiLine" || prop == L"Multiline") {
         // yeniden oluşturma gerektirir — yüzey halleder (MWM_PROPS_APPLIED)
+    } else if (prop == L"Items") {
+        // FAZ 2.6.3: koleksiyon düzenleyicisinden canlı önizleme
+        if (c->type == L"ListView") FillListRows(h, value);
+        else FillListItems(h, value);
+    } else if (prop == L"Columns") {
+        FillListColumns(h, value);
+    } else if (prop == L"Nodes") {
+        FillTreeNodes(h, value);
     }
     // FAZ 2.6: TabPage özellikleri — Text sekme başlığını da günceller
     if (c->type == L"TabPage") {
@@ -274,17 +391,30 @@ HWND CreateOnSurface(HWND surface, Ctrl* c) {
     if (!txt.empty()) SetWindowTextW(h, txt.c_str());
     // font
     ApplyFontIfNeeded(c);
-    // listview/treeview/combobox örnek içerik (tasarım görünümü)
-    if (c->type == L"ComboBox") {
-        for (int i = 1; i <= 3; i++) {
-            wchar_t b[32]; swprintf(b, 32, L"Öğe %d", i);
-            SendMessageW(h, CB_ADDSTRING, 0, (LPARAM)b);
+    // FAZ 2.6.3: koleksiyon tasarım önizlemesi — Items/Columns/Nodes özelliği
+    // VARSA gerçek veri, YOKSA örnek içerik (yeni yerleştirilen kontrol için)
+    if (c->type == L"ComboBox" || c->type == L"ListBox" || c->type == L"CheckedListBox") {
+        std::wstring items = c->Get(L"Items");
+        if (!items.empty()) FillListItems(h, items);
+        else if (c->type == L"ComboBox") {
+            for (int i = 1; i <= 3; i++) {
+                wchar_t b[32]; swprintf(b, 32, L"Öğe %d", i);
+                SendMessageW(h, CB_ADDSTRING, 0, (LPARAM)b);
+            }
+        } else {
+            for (int i = 1; i <= 4; i++) {
+                wchar_t b[32]; swprintf(b, 32, L"Öğe %d", i);
+                SendMessageW(h, LB_ADDSTRING, 0, (LPARAM)b);
+            }
         }
-    } else if (c->type == L"ListBox" || c->type == L"CheckedListBox") {
-        for (int i = 1; i <= 4; i++) {
-            wchar_t b[32]; swprintf(b, 32, L"Öğe %d", i);
-            SendMessageW(h, LB_ADDSTRING, 0, (LPARAM)b);
-        }
+    } else if (c->type == L"ListView") {
+        std::wstring cols = c->Get(L"Columns");
+        if (!cols.empty()) FillListColumns(h, cols);
+        std::wstring litems = c->Get(L"Items");
+        if (!litems.empty()) FillListRows(h, litems);
+    } else if (c->type == L"TreeView") {
+        std::wstring nds = c->Get(L"Nodes");
+        if (!nds.empty()) FillTreeNodes(h, nds);
     } else if (c->type == L"TabControl") {
         // FAZ 2.6: örnek sekmeler YOK — sayfalar gerçek TabPage Ctrl'leridir;
         // CreateBranch/PlaceNew sayfa çocuklarını buradan sonra oluşturur
@@ -340,6 +470,16 @@ void UpdateTabPages(HWND surf, Ctrl* tab) {
                 SendMessageW(tab->hwnd, TCM_SETCURSEL, (WPARAM)idx, 0);
             }
         }
+    }
+    // FAZ 2.6.3 KRİTİK DÜZELTME: seçili başlık GÖRSEL vurgusu her durumda
+    // uygulanmalıydı — TCM_SETCURSEL yalnız başlıklar yeniden kurulduğunda
+    // (cnt != pages.size) gönderiliyordu; sayfa değişince içerik güncellenip
+    // başlık vurgusu tabpage1'de kalıyordu ("hangisi seçiliyse o seçili
+    // görünsün" hatasının kökü). Artık SEÇİM DEĞİŞİMİNDE DE gönderilir.
+    if (selPg) {
+        int idx = 0;
+        for (auto* p : pages) { if (p == selPg) break; idx++; }
+        SendMessageW(tab->hwnd, TCM_SETCURSEL, (WPARAM)idx, 0);
     }
     // görüntü alanı (tab client koordinatı)
     RECT dr = { 0, 0, tab->w, tab->h };

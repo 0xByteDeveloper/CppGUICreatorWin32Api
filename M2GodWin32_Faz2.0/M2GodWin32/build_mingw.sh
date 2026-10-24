@@ -2,7 +2,7 @@
 # M2GodWin32 — mingw-w64 derleme betiği (Linux cross / portatif)
 set -e
 cd "$(dirname "$0")"   # proje klasörü (build/ ve src/ burada)
-export PATH=/home/z/opt/usr/bin:/home/z/tools/deb/root/usr/bin:$PATH
+export PATH=/home/z/opt/bin:/home/z/opt/usr/bin:/home/z/tools/deb/root/usr/bin:$PATH
 mkdir -p Bin obj
 echo "[1/3] Kaynak (.rc) derleniyor..."
 x86_64-w64-mingw32-windres app.rc -O coff -o obj/app.res

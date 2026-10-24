@@ -13,4 +13,8 @@ bool IsEditing();                  // satır içi düzenleyici açık mı (ESC h
 
 // FAZ 2.6: TabPage Collection Editor (VS karşılığı) — modal diyalog
 void OpenTabPagesEditor(Ctrl* tab);
+
+// FAZ 2.6.3: Koleksiyon Düzenleyicisi (VS String Collection Editor karşılığı)
+// Items (ListBox/CheckedListBox/ComboBox/ListView) / Columns (ListView) / Nodes (TreeView)
+void OpenCollectionEditor(Ctrl* c, const std::wstring& propName);
 }
